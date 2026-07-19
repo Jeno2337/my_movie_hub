@@ -1,25 +1,26 @@
 import 'package:flutter/material.dart';
 
-import 'dashboard_screen.dart';
 import 'firebase_service.dart';
-import 'signup_screen.dart';
 
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+class SignupScreen extends StatefulWidget {
+  const SignupScreen({super.key});
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  State<SignupScreen> createState() => _SignupScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen>
+class _SignupScreenState extends State<SignupScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
 
   final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _mobileController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+
   bool _isLoading = false;
   final FirebaseService _firebaseService = FirebaseService();
 
@@ -28,13 +29,13 @@ class _LoginScreenState extends State<LoginScreen>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1500),
+      duration: const Duration(milliseconds: 1200),
     );
 
     _fadeAnimation = CurvedAnimation(parent: _controller, curve: Curves.easeIn);
 
     _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.5),
+      begin: const Offset(0, 0.3),
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutQuart));
 
@@ -44,30 +45,34 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   void dispose() {
     _controller.dispose();
+    _nameController.dispose();
+    _mobileController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
-  Future<void> _handleLogin() async {
+  Future<void> _handleSignup() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
 
     try {
-      final userData = await _firebaseService.signIn(
+      await _firebaseService.signUp(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
+        name: _nameController.text.trim(),
+        mobile: _mobileController.text.trim(),
       );
 
-      // Save user data to local storage
-      await _firebaseService.saveUserData(userData);
-
       if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const DashboardScreen()),
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Account created successfully! Please login.'),
+            backgroundColor: Colors.green,
+          ),
         );
+        Navigator.pop(context); // Go back to login
       }
     } catch (e) {
       if (mounted) {
@@ -86,7 +91,7 @@ class _LoginScreenState extends State<LoginScreen>
       backgroundColor: Colors.black,
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 30),
+          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 50),
           child: FadeTransition(
             opacity: _fadeAnimation,
             child: SlideTransition(
@@ -97,36 +102,68 @@ class _LoginScreenState extends State<LoginScreen>
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(20),
+                      padding: const EdgeInsets.all(15),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         border: Border.all(color: Colors.white24, width: 2),
                       ),
                       child: const Icon(
-                        Icons.lock_person_rounded,
-                        size: 80,
+                        Icons.person_add_rounded,
+                        size: 60,
                         color: Colors.white,
                       ),
                     ),
-                    const SizedBox(height: 30),
+                    const SizedBox(height: 20),
                     const Text(
-                      'Welcome Back',
+                      'Create Account',
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 32,
-                        letterSpacing: 1.2,
+                        fontSize: 28,
+                        letterSpacing: 1.1,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
                     const Text(
-                      'Login to your account',
+                      'Join us to get started',
                       style: TextStyle(color: Colors.white54, fontSize: 16),
                     ),
-                    const SizedBox(height: 50),
+                    const SizedBox(height: 40),
+                    _buildTextField(
+                      controller: _nameController,
+                      hintText: 'User Name',
+                      icon: Icons.person_outline_rounded,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter your name';
+                        }
+                        if (value.length < 3) {
+                          return 'Name must be at least 3 characters';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 15),
+                    _buildTextField(
+                      controller: _mobileController,
+                      hintText: 'Mobile Number',
+                      icon: Icons.phone_iphone_rounded,
+                      keyboardType: TextInputType.phone,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please enter mobile number';
+                        }
+                        if (value.length < 10) {
+                          return 'Please enter a valid mobile number';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 15),
                     _buildTextField(
                       controller: _emailController,
                       hintText: 'Email ID',
-                      icon: Icons.alternate_email_rounded,
+                      icon: Icons.email_outlined,
+                      keyboardType: TextInputType.emailAddress,
                       validator: (value) {
                         if (value == null || value.isEmpty) {
                           return 'Please enter your email';
@@ -140,15 +177,18 @@ class _LoginScreenState extends State<LoginScreen>
                         return null;
                       },
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 15),
                     _buildTextField(
                       controller: _passwordController,
                       hintText: 'Password',
-                      icon: Icons.password_rounded,
+                      icon: Icons.lock_outline_rounded,
                       isPassword: true,
                       validator: (value) {
                         if (value == null || value.isEmpty) {
-                          return 'Please enter your password';
+                          return 'Please enter a password';
+                        }
+                        if (value.length < 6) {
+                          return 'Password must be at least 6 characters';
                         }
                         return null;
                       },
@@ -158,7 +198,7 @@ class _LoginScreenState extends State<LoginScreen>
                       width: double.infinity,
                       height: 55,
                       child: ElevatedButton(
-                        onPressed: _isLoading ? null : _handleLogin,
+                        onPressed: _isLoading ? null : _handleSignup,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
                           foregroundColor: Colors.black,
@@ -177,7 +217,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 ),
                               )
                             : const Text(
-                                'LOGIN',
+                                'SIGN UP',
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
@@ -185,23 +225,18 @@ class _LoginScreenState extends State<LoginScreen>
                               ),
                       ),
                     ),
-                    const SizedBox(height: 25),
+                    const SizedBox(height: 20),
                     TextButton(
                       onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const SignupScreen(),
-                          ),
-                        );
+                        Navigator.pop(context);
                       },
                       child: RichText(
                         text: const TextSpan(
-                          text: "Don't have an account? ",
+                          text: "Already have an account? ",
                           style: TextStyle(color: Colors.white54),
                           children: [
                             TextSpan(
-                              text: "Create User",
+                              text: "Login",
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
@@ -226,11 +261,13 @@ class _LoginScreenState extends State<LoginScreen>
     required String hintText,
     required IconData icon,
     bool isPassword = false,
+    TextInputType keyboardType = TextInputType.text,
     String? Function(String?)? validator,
   }) {
     return TextFormField(
       controller: controller,
       obscureText: isPassword,
+      keyboardType: keyboardType,
       validator: validator,
       style: const TextStyle(color: Colors.white),
       cursorColor: Colors.white,
