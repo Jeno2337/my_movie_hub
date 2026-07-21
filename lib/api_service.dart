@@ -32,10 +32,18 @@ class ApiService {
     String type,
     int page, {
     int? genreId,
+    String? languageCode,
+    String? region,
   }) async {
     String urlString = '$_baseUrl/discover/$type?api_key=$_apiKey&page=$page';
     if (genreId != null) {
       urlString += '&with_genres=$genreId';
+    }
+    if (languageCode != null && languageCode != 'en') {
+      urlString += '&with_original_language=$languageCode';
+    }
+    if (region != null) {
+      urlString += '&region=$region';
     }
     final url = Uri.parse(urlString);
     print('API REQUEST [fetchDiscover ($type)]: $url');
@@ -46,10 +54,15 @@ class ApiService {
     String type,
     int page, {
     String timeWindow = 'day',
+    String? languageCode,
   }) async {
-    final url = Uri.parse(
-      '$_baseUrl/trending/$type/$timeWindow?api_key=$_apiKey&page=$page',
-    );
+    String urlString =
+        '$_baseUrl/trending/$type/$timeWindow?api_key=$_apiKey&page=$page';
+    if (languageCode != null && languageCode != 'en') {
+      // Trending API does not directly support with_original_language in discover sense
+      // but we can use discover for language specific "trending" or just use discover
+    }
+    final url = Uri.parse(urlString);
     print('API REQUEST [fetchTrending ($type/$timeWindow)]: $url');
     return _getWithRetry(url);
   }

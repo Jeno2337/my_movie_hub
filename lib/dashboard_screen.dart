@@ -5,6 +5,7 @@ import 'api_service.dart';
 import 'firebase_service.dart';
 import 'movie_detail_screen.dart';
 import 'movie_model.dart';
+import 'profile_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -55,19 +56,28 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Future<void> _initializeData() async {
-    await _fetchTrending();
-    if (mounted) {
-      await Future.delayed(const Duration(milliseconds: 300));
-      await _fetchDiscover();
-      await Future.delayed(const Duration(milliseconds: 300));
-      _fetchGenres();
-      _fetchDiscoverTab();
-    }
+    final language = await _firebaseService.getLanguage();
+    setState(() {
+      _isLoading = true;
+      _isTrendingLoading = true;
+      _isDiscoverLoading = true;
+      _movies.clear();
+      _trendingMovies.clear();
+      _discoverMovies.clear();
+      _currentPage = 1;
+      _discoverPage = 1;
+    });
+
+    _fetchGenres();
+    _fetchTrending(languageCode: language);
+    _fetchDiscover(languageCode: language);
+    _fetchDiscoverTab(languageCode: language);
   }
 
   Future<void> _fetchGenres() async {
     if (mounted) setState(() => _isGenresLoading = true);
     try {
+      debugPrint('API TASK: Fetching Genres for $_discoverType');
       final data = await _apiService.fetchGenres(_discoverType);
       if (mounted) {
         setState(() {
@@ -76,22 +86,35 @@ class _DashboardScreenState extends State<DashboardScreen>
         });
       }
     } catch (e) {
+      debugPrint('API ERROR: Failed to fetch genres: $e');
       if (mounted) setState(() => _isGenresLoading = false);
     }
   }
 
-  Future<void> _fetchTrending() async {
-    if (_isTrendingLoading) return;
+  Future<void> _fetchTrending({String? languageCode}) async {
+    final lang = languageCode ?? await _firebaseService.getLanguage();
     if (mounted) setState(() => _isTrendingLoading = true);
 
     try {
       final timeWindow = _homeType == 'tv' ? 'week' : 'day';
-      final data = await _apiService.fetchTrending(
-        _homeType,
-        1,
-        timeWindow: timeWindow,
-      );
-      final List<dynamic> results = data['results'];
+      debugPrint('API TASK: Fetching Trending ($_homeType) for lang: $lang');
+
+      Map<String, dynamic> data;
+      if (lang == 'en') {
+        data = await _apiService.fetchTrending(
+          _homeType,
+          1,
+          timeWindow: timeWindow,
+        );
+      } else {
+        data = await _apiService.fetchDiscover(
+          _homeType,
+          1,
+          languageCode: lang,
+        );
+      }
+
+      final List<dynamic> results = data['results'] ?? [];
       final List<Movie> newMovies = results
           .map((json) => Movie.fromJson(json))
           .toList();
@@ -103,31 +126,29 @@ class _DashboardScreenState extends State<DashboardScreen>
         });
       }
     } catch (e) {
+      debugPrint('API ERROR: Failed to fetch trending: $e');
       if (mounted) {
-        setState(() {
-          _isTrendingLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Something went wrong. Please try again.'),
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: _fetchTrending,
-              textColor: Colors.white,
-            ),
-          ),
-        );
+        setState(() => _isTrendingLoading = false);
       }
     }
   }
 
-  Future<void> _fetchDiscover() async {
-    if (_isLoading) return;
+  Future<void> _fetchDiscover({String? languageCode}) async {
+    final lang = languageCode ?? await _firebaseService.getLanguage();
+    // Removed the guard that was incorrectly blocking the initial fetch
     if (mounted) setState(() => _isLoading = true);
 
     try {
-      final data = await _apiService.fetchDiscover(_libraryType, _currentPage);
-      final List<dynamic> results = data['results'];
+      debugPrint(
+        'API TASK: Fetching Library All (Discover $_libraryType) for lang: $lang, Region: IN',
+      );
+      final data = await _apiService.fetchDiscover(
+        _libraryType,
+        _currentPage,
+        languageCode: lang,
+        region: 'IN', // Added region filter for India
+      );
+      final List<dynamic> results = data['results'] ?? [];
       final List<Movie> newMovies = results
           .map((json) => Movie.fromJson(json))
           .toList();
@@ -146,16 +167,15 @@ class _DashboardScreenState extends State<DashboardScreen>
         });
       }
     } catch (e) {
+      debugPrint('API ERROR: Failed to fetch library discover: $e');
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Something went wrong. Please try again.'),
+            content: const Text('Failed to load library content.'),
             action: SnackBarAction(
               label: 'Retry',
-              onPressed: _fetchDiscover,
+              onPressed: () => _fetchDiscover(languageCode: languageCode),
               textColor: Colors.white,
             ),
           ),
@@ -164,17 +184,21 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
   }
 
-  Future<void> _fetchDiscoverTab() async {
-    if (_isDiscoverLoading) return;
+  Future<void> _fetchDiscoverTab({String? languageCode}) async {
+    final lang = languageCode ?? await _firebaseService.getLanguage();
     if (mounted) setState(() => _isDiscoverLoading = true);
 
     try {
+      debugPrint(
+        'API TASK: Fetching Discover Tab ($_discoverType) for lang: $lang, Page: $_discoverPage',
+      );
       final data = await _apiService.fetchDiscover(
         _discoverType,
         _discoverPage,
         genreId: _selectedGenreId,
+        languageCode: lang,
       );
-      final List<dynamic> results = data['results'];
+      final List<dynamic> results = data['results'] ?? [];
       final List<Movie> newMovies = results
           .map((json) => Movie.fromJson(json))
           .toList();
@@ -188,21 +212,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         });
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isDiscoverLoading = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Something went wrong. Please try again.'),
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: _fetchDiscoverTab,
-              textColor: Colors.white,
-            ),
-          ),
-        );
-      }
+      debugPrint('API ERROR: Failed to fetch discover tab: $e');
+      if (mounted) setState(() => _isDiscoverLoading = false);
     }
   }
 
@@ -260,7 +271,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.bar_chart_rounded),
-            label: 'Statistic',
+            label: 'Stats',
           ),
         ],
       ),
@@ -278,49 +289,57 @@ class _DashboardScreenState extends State<DashboardScreen>
       case 3:
         return _buildStatsTab();
       default:
-        return _buildHomeTab();
+        return const Center(
+          child: Text('Coming Soon', style: TextStyle(color: Colors.white)),
+        );
     }
   }
 
   Widget _buildHomeTab() {
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(),
-            const SizedBox(height: 30),
-            _buildStatsRow(),
-            const SizedBox(height: 30),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return StreamBuilder<Map<String, dynamic>>(
+      stream: _firebaseService.getLibraryStats(),
+      builder: (context, snapshot) {
+        final stats = snapshot.data ?? {};
+        return SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'TRENDING THIS WEEK',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.1,
-                  ),
+                _buildHeader(),
+                const SizedBox(height: 25),
+                _buildStatsRow(stats),
+                const SizedBox(height: 30),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'TRENDING THIS WEEK',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    _buildTypeDropdown(_homeType, (val) {
+                      if (val != null) {
+                        setState(() {
+                          _homeType = val;
+                          _trendingMovies.clear();
+                        });
+                        _fetchTrending();
+                      }
+                    }),
+                  ],
                 ),
-                _buildTypeDropdown(_homeType, (val) {
-                  if (val != null) {
-                    setState(() {
-                      _homeType = val;
-                      _trendingMovies = [];
-                    });
-                    _fetchTrending();
-                  }
-                }),
+                const SizedBox(height: 20),
+                _buildTrendingGrid(),
               ],
             ),
-            const SizedBox(height: 20),
-            _buildTrendingGrid(),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -330,7 +349,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         return [
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -342,18 +361,17 @@ class _DashboardScreenState extends State<DashboardScreen>
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  if (_tabController.index != 4)
-                    _buildTypeDropdown(_libraryType, (val) {
-                      if (val != null) {
-                        setState(() {
-                          _libraryType = val;
-                          _movies.clear();
-                          _currentPage = 1;
-                          _hasMore = true;
-                        });
-                        _fetchDiscover();
-                      }
-                    }),
+                  _buildTypeDropdown(_libraryType, (val) {
+                    if (val != null) {
+                      setState(() {
+                        _libraryType = val;
+                        _movies.clear();
+                        _currentPage = 1;
+                        _hasMore = true;
+                      });
+                      _fetchDiscover();
+                    }
+                  }),
                 ],
               ),
             ),
@@ -362,61 +380,52 @@ class _DashboardScreenState extends State<DashboardScreen>
             pinned: true,
             delegate: _SliverAppBarDelegate(
               Column(
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   TabBar(
                     controller: _tabController,
                     isScrollable: true,
+                    tabAlignment: TabAlignment.start,
+                    indicatorColor: Colors.white,
+                    indicatorSize: TabBarIndicatorSize.label,
                     labelColor: Colors.white,
-                    unselectedLabelColor: Colors.white54,
-                    indicatorSize: TabBarIndicatorSize.tab,
+                    unselectedLabelColor: Colors.white38,
                     dividerColor: Colors.transparent,
-                    onTap: (index) => setState(() {}),
-                    indicator: BoxDecoration(
-                      borderRadius: BorderRadius.circular(25),
-                      color: Colors.white.withAlpha(51),
-                      border: Border.all(color: Colors.white, width: 1),
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
                     tabs: const [
                       Tab(
-                        height: 35,
                         child: Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 12),
+                          padding: EdgeInsets.symmetric(horizontal: 10),
                           child: Text('All'),
                         ),
                       ),
                       Tab(
-                        height: 35,
                         child: Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 12),
+                          padding: EdgeInsets.symmetric(horizontal: 10),
                           child: Text('Watching'),
                         ),
                       ),
                       Tab(
-                        height: 35,
                         child: Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 12),
+                          padding: EdgeInsets.symmetric(horizontal: 10),
                           child: Text('Completed'),
                         ),
                       ),
                       Tab(
-                        height: 35,
                         child: Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 12),
-                          child: Text('Watchlist'),
+                          padding: EdgeInsets.symmetric(horizontal: 10),
+                          child: Text('Bucket List'),
                         ),
                       ),
                       Tab(
-                        height: 35,
                         child: Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 12),
+                          padding: EdgeInsets.symmetric(horizontal: 10),
                           child: Text('Favorite'),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                 ],
               ),
             ),
@@ -431,12 +440,64 @@ class _DashboardScreenState extends State<DashboardScreen>
             controller: _scrollController,
             type: _libraryType,
           ),
-          _buildPlaceholder('Watching'),
-          _buildPlaceholder('Completed'),
-          _buildPlaceholder('Watchlist'),
+          _buildFirestoreStreamGrid(
+            _firebaseService.getWatchingStream(),
+            'No watching items',
+          ),
+          _buildFirestoreStreamGrid(
+            _firebaseService.getCompletedStream(),
+            'No completed items',
+          ),
+          _buildFirestoreStreamGrid(
+            _firebaseService.getWatchlistStream(),
+            'No bucket list items',
+          ),
           _buildFavoritesTab(),
         ],
       ),
+    );
+  }
+
+  Widget _buildFirestoreStreamGrid(
+    Stream<QuerySnapshot> stream,
+    String emptyMessage,
+  ) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: stream,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: Colors.white),
+          );
+        }
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return _buildPlaceholder(emptyMessage);
+        }
+        final docs = snapshot.data!.docs;
+        return GridView.builder(
+          padding: const EdgeInsets.all(20),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            childAspectRatio: 0.65,
+            crossAxisSpacing: 15,
+            mainAxisSpacing: 15,
+          ),
+          itemCount: docs.length,
+          itemBuilder: (context, index) {
+            final data = docs[index].data() as Map<String, dynamic>;
+            final movie = Movie(
+              id: data['id'],
+              title: data['title'] ?? data['name'] ?? 'Unknown',
+              posterPath: data['poster_path'] ?? data['still_path'] ?? '',
+              releaseDate: '',
+              voteAverage: 0,
+              overview: '',
+            );
+            final type = data['type'] ?? 'movie';
+            return _buildMovieCard(movie, type);
+          },
+        );
+      },
     );
   }
 
@@ -452,9 +513,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return _buildPlaceholder('No favorites yet');
         }
-
         final favDocs = snapshot.data!.docs;
-
         return GridView.builder(
           padding: const EdgeInsets.all(20),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -468,14 +527,13 @@ class _DashboardScreenState extends State<DashboardScreen>
             final data = favDocs[index].data() as Map<String, dynamic>;
             final movie = Movie(
               id: data['id'],
-              title: data['title'],
-              posterPath: data['poster_path'],
+              title: data['title'] ?? data['name'] ?? 'Unknown',
+              posterPath: data['poster_path'] ?? data['still_path'] ?? '',
               releaseDate: '',
               voteAverage: 0,
               overview: '',
             );
             final type = data['type'] ?? 'movie';
-
             return Stack(
               children: [
                 _buildMovieCard(movie, type),
@@ -485,10 +543,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                   child: GestureDetector(
                     onTap: () {
                       _firebaseService.toggleFavorite(
-                        movie.id,
-                        type,
-                        movie.title,
-                        movie.posterPath ?? '',
+                        id: movie.id,
+                        type: type,
+                        details: data,
                       );
                     },
                     child: Container(
@@ -586,9 +643,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildGenreTabBar() {
-    if (_isGenresLoading) {
-      return const SizedBox(height: 35);
-    }
+    if (_isGenresLoading) return const SizedBox(height: 35);
     return SizedBox(
       height: 35,
       child: ListView.separated(
@@ -602,7 +657,6 @@ class _DashboardScreenState extends State<DashboardScreen>
           final bool isSelected = isAll
               ? _selectedGenreId == null
               : _selectedGenreId == genre['id'];
-
           return GestureDetector(
             onTap: () {
               setState(() {
@@ -670,141 +724,331 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildStatsTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+    return StreamBuilder<Map<String, dynamic>>(
+      stream: _firebaseService.getLibraryStats(),
+      builder: (context, snapshot) {
+        final stats = snapshot.data ?? {};
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Your Stats',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 25),
+              _buildMainWatchTimeCard(stats['watchTimeHrs'] ?? '0.0'),
+              const SizedBox(height: 25),
+              _buildWatchTimeBreakdown(
+                stats['movieMinutes'] ?? 0,
+                stats['tvMinutes'] ?? 0,
+              ),
+              const SizedBox(height: 25),
+              _buildCompletionCard(stats['completionRate'] ?? 0.0),
+              const SizedBox(height: 30),
+              _buildSectionTitle('Movie Insights'),
+              _buildSmallStatCard(
+                stats['movies']?.toString() ?? '0',
+                'Movies Finished',
+              ),
+              _buildGenreReport(
+                stats['topMovieGenres'] as List?,
+                'Top Movie Genres',
+              ),
+              const SizedBox(height: 30),
+              _buildSectionTitle('TV Series Insights'),
+              _buildSmallStatCard(
+                stats['shows']?.toString() ?? '0',
+                'Series Finished',
+              ),
+              _buildGenreReport(stats['topTvGenres'] as List?, 'Top TV Genres'),
+              const SizedBox(height: 50),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 15),
+      child: Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainWatchTimeCard(String watchTime) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 30),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.white.withAlpha(10), Colors.white.withAlpha(5)],
+        ),
+        borderRadius: BorderRadius.circular(25),
+        border: Border.all(color: Colors.white12),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Your Stats',
-            style: TextStyle(
+          Text(
+            '$watchTime hrs',
+            style: const TextStyle(
               color: Colors.white,
-              fontSize: 28,
+              fontSize: 48,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const Text(
+            'TOTAL TIME WATCHED',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 12,
+              letterSpacing: 2,
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 25),
-          Center(
-            child: Container(
-              width: 350,
-              height: 120,
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E1E1E),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: const Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    '840 hrs',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 36,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  Text(
-                    'Total Watch Time',
-                    style: TextStyle(color: Colors.white54, fontSize: 14),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 30),
-          GridView.count(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 3,
-            mainAxisSpacing: 15,
-            crossAxisSpacing: 15,
-            children: [
-              _buildSmallStatCard('2,450', 'Episodes'),
-              _buildSmallStatCard(_formatCount(_totalSeriesCount), 'Shows'),
-              _buildSmallStatCard(_formatCount(_totalMoviesCount), 'Movies'),
-              _buildSmallStatCard('18', 'Favorite'),
-              _buildSmallStatCard('5', 'Watching'),
-              _buildSmallStatCard('112', 'Completed'),
-            ],
-          ),
-          _buildGenreReport(),
         ],
       ),
     );
   }
 
-  Widget _buildGenreReport() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 30),
-        const Text(
-          'Top Genres',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
+  Widget _buildWatchTimeBreakdown(int movieMins, int tvMins) {
+    final total = movieMins + tvMins;
+    final moviePct = total == 0 ? 0.0 : movieMins / total;
+    final tvPct = total == 0 ? 0.0 : tvMins / total;
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Watch Time Breakdown',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
           ),
-        ),
-        const SizedBox(height: 20),
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1E1E1E),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
+          const SizedBox(height: 20),
+          Row(
             children: [
-              _buildGenreRow('Action', 0.85, '85%'),
-              _buildGenreRow('Drama', 0.65, '65%'),
-              _buildGenreRow('Comedy', 0.45, '45%'),
-              _buildGenreRow('Sci-Fi', 0.30, '30%'),
+              Expanded(
+                flex: (moviePct * 100).toInt().clamp(1, 100),
+                child: Container(
+                  height: 12,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(6),
+                      bottomLeft: Radius.circular(6),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 2),
+              Expanded(
+                flex: (tvPct * 100).toInt().clamp(1, 100),
+                child: Container(
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withAlpha(50),
+                    borderRadius: const BorderRadius.only(
+                      topRight: Radius.circular(6),
+                      bottomRight: Radius.circular(6),
+                    ),
+                  ),
+                ),
+              ),
             ],
+          ),
+          const SizedBox(height: 15),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildLegendItem(
+                'Movies',
+                Colors.white,
+                '${(moviePct * 100).toInt()}%',
+              ),
+              _buildLegendItem(
+                'Series',
+                Colors.white.withAlpha(50),
+                '${(tvPct * 100).toInt()}%',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLegendItem(String label, Color color, String value) {
+    return Row(
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '$label: ',
+          style: const TextStyle(color: Colors.white54, fontSize: 13),
+        ),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
           ),
         ),
       ],
     );
   }
 
-  Widget _buildGenreRow(String genre, double percentage, String label) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
-      child: Column(
+  Widget _buildCompletionCard(double rate) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Stack(
+            alignment: Alignment.center,
             children: [
-              Text(genre, style: const TextStyle(color: Colors.white70)),
+              SizedBox(
+                width: 60,
+                height: 60,
+                child: CircularProgressIndicator(
+                  value: rate,
+                  strokeWidth: 8,
+                  backgroundColor: Colors.white10,
+                  color: Colors.greenAccent,
+                ),
+              ),
               Text(
-                label,
-                style: const TextStyle(color: Colors.white38, fontSize: 12),
+                '${(rate * 100).toInt()}%',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          LinearProgressIndicator(
-            value: percentage,
-            backgroundColor: Colors.white12,
-            color: Colors.white,
-            minHeight: 4,
-            borderRadius: BorderRadius.circular(2),
+          const SizedBox(width: 20),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Library Efficiency',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  'Percentage of your watchlist items that you have finished.',
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
+  Widget _buildGenreReport(List? topGenres, String title) {
+    if (topGenres == null || topGenres.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 20),
+        Text(
+          title,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 10),
+        ...topGenres.map(
+          (g) => Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      g['name'],
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
+                    Text(
+                      '${(g['percentage'] * 100).toInt()}%',
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                LinearProgressIndicator(
+                  value: g['percentage'],
+                  backgroundColor: Colors.white10,
+                  color: Colors.white,
+                  minHeight: 2,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildSmallStatCard(String value, String label) {
     return Container(
+      width: double.infinity,
       decoration: BoxDecoration(
         color: const Color(0xFF1E1E1E),
         borderRadius: BorderRadius.circular(15),
       ),
-      padding: const EdgeInsets.all(10),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+      padding: const EdgeInsets.all(15),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white54, fontSize: 14),
+          ),
           Text(
             value,
             style: const TextStyle(
@@ -812,12 +1056,6 @@ class _DashboardScreenState extends State<DashboardScreen>
               fontSize: 18,
               fontWeight: FontWeight.bold,
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white38, fontSize: 10),
           ),
         ],
       ),
@@ -849,10 +1087,19 @@ class _DashboardScreenState extends State<DashboardScreen>
                 ),
               ],
             ),
-            const CircleAvatar(
-              radius: 25,
-              backgroundColor: Colors.white12,
-              child: ClipOval(
+            GestureDetector(
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ProfileScreen(),
+                  ),
+                );
+                _initializeData();
+              },
+              child: const CircleAvatar(
+                radius: 25,
+                backgroundColor: Colors.white12,
                 child: Icon(Icons.person, color: Colors.white, size: 30),
               ),
             ),
@@ -868,7 +1115,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     return count.toString();
   }
 
-  Widget _buildStatsRow() {
+  Widget _buildStatsRow(Map<String, dynamic> stats) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -878,11 +1125,11 @@ class _DashboardScreenState extends State<DashboardScreen>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _buildStatItem(_formatCount(_totalMoviesCount), 'Movies'),
+          _buildStatItem(stats['movies']?.toString() ?? '0', 'Movies'),
           _buildDivider(),
-          _buildStatItem(_formatCount(_totalSeriesCount), 'Series'),
+          _buildStatItem(stats['shows']?.toString() ?? '0', 'Series'),
           _buildDivider(),
-          _buildStatItem('840', 'Hrs Watch'),
+          _buildStatItem(stats['watchTimeHrs'] ?? '0.0', 'Hrs Watch'),
         ],
       ),
     );
@@ -913,17 +1160,15 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildTrendingGrid() {
-    if (_isTrendingLoading) {
+    if (_isTrendingLoading)
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(20.0),
           child: CircularProgressIndicator(color: Colors.white),
         ),
       );
-    }
-    if (_trendingMovies.isEmpty) {
+    if (_trendingMovies.isEmpty)
       return _buildPlaceholder('No Trending Content');
-    }
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -951,11 +1196,10 @@ class _DashboardScreenState extends State<DashboardScreen>
     final loading = isLoading ?? _isLoading;
     final more = hasMore ?? _hasMore;
     if (movies == null || movies.isEmpty) {
-      if (loading) {
+      if (loading)
         return const Center(
           child: CircularProgressIndicator(color: Colors.white),
         );
-      }
       return _buildPlaceholder('No Content Found');
     }
     return GridView.builder(
@@ -971,7 +1215,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       ),
       itemCount: movies.length + (more ? 1 : 0),
       itemBuilder: (context, index) {
-        if (index == movies.length) {
+        if (index == movies.length)
           return const Center(
             child: Padding(
               padding: EdgeInsets.all(8.0),
@@ -981,7 +1225,6 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
             ),
           );
-        }
         return _buildMovieCard(movies[index], type);
       },
     );
@@ -1042,9 +1285,9 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
   _SliverAppBarDelegate(this.widget);
   final Widget widget;
   @override
-  double get minExtent => 54;
+  double get minExtent => 75;
   @override
-  double get maxExtent => 54;
+  double get maxExtent => 75;
   @override
   Widget build(
     BuildContext context,
@@ -1052,7 +1295,7 @@ class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
     bool overlapsContent,
   ) => Container(
     color: Colors.black,
-    height: 54,
+    height: 75,
     alignment: Alignment.center,
     child: widget,
   );

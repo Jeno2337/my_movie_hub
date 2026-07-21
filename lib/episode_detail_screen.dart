@@ -68,6 +68,15 @@ class _EpisodeDetailScreenState extends State<EpisodeDetailScreen> {
   }
 
   Future<void> _loadTrailer() async {
+    // Add to 'watching' collection
+    if (_episodeDetails != null) {
+      _firebaseService.addToWatching(
+        id: _episodeDetails!['id'] ?? 0,
+        type: 'episode',
+        details: _episodeDetails!,
+      );
+    }
+
     try {
       final data = await _apiService.fetchVideos('tv', widget.tvId);
       final List results = data['results'];
@@ -210,22 +219,10 @@ class _EpisodeDetailScreenState extends State<EpisodeDetailScreen> {
                     size: 18,
                   ),
                   onPressed: () async {
-                    // try {
-                    // await FirebaseFirestore.instance
-                    //     .collection("test")
-                    //     .doc("1")
-                    //     .set({"name": "Movie Hub"});
-                    //
-                    // print("Firestore Write Success");
-                    // } catch (e) {
-                    //   print(e);
-                    // }
-
                     _firebaseService.toggleFavorite(
-                      _episodeDetails!['id'] ?? 0,
-                      'episode',
-                      _episodeDetails!['name'] ?? 'Unknown',
-                      _episodeDetails!['still_path'] ?? '',
+                      id: _episodeDetails!['id'] ?? 0,
+                      type: 'episode',
+                      details: _episodeDetails ?? {},
                     );
                   },
                 ),
@@ -273,73 +270,158 @@ class _EpisodeDetailScreenState extends State<EpisodeDetailScreen> {
   }
 
   Widget _buildActionButtons() {
-    return Column(
-      children: [
-        SizedBox(
-          width: double.infinity,
-          height: 45,
-          child: ElevatedButton.icon(
-            onPressed: _loadTrailer,
-            icon: const Icon(Icons.play_arrow, color: Colors.black, size: 28),
-            label: const Text(
-              'Play',
-              style: TextStyle(
+    return StreamBuilder<bool>(
+      stream: _firebaseService.isWatching(_episodeDetails?['id'] ?? 0),
+      builder: (context, snapshot) {
+        final isWatching = snapshot.data ?? false;
+
+        if (isWatching) {
+          return SizedBox(
+            width: double.infinity,
+            height: 45,
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                if (_episodeDetails != null) {
+                  await _firebaseService.markAsCompleted(
+                    id: _episodeDetails!['id'] ?? 0,
+                    type: 'episode',
+                    details: _episodeDetails!,
+                  );
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                  }
+                }
+              },
+              icon: const Icon(
+                Icons.check_circle,
                 color: Colors.black,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
+                size: 24,
+              ),
+              label: const Text(
+                'Completed',
+                style: TextStyle(
+                  color: Colors.black,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.greenAccent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4),
+                ),
               ),
             ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(4),
-              ),
+          );
+        }
+
+        return Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: SizedBox(
+                    height: 45,
+                    child: ElevatedButton.icon(
+                      onPressed: _loadTrailer,
+                      icon: const Icon(
+                        Icons.play_arrow,
+                        color: Colors.black,
+                        size: 28,
+                      ),
+                      label: const Text(
+                        'Play',
+                        style: TextStyle(
+                          color: Colors.black,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: SizedBox(
+                    height: 45,
+                    child: ElevatedButton.icon(
+                      onPressed: _loadTrailer,
+                      icon: const Icon(
+                        Icons.video_library,
+                        color: Colors.black,
+                        size: 24,
+                      ),
+                      label: const Text(
+                        'Trailer',
+                        style: TextStyle(
+                          color: Colors.black,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.amber,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        SizedBox(
-          width: double.infinity,
-          height: 45,
-          child: StreamBuilder<bool>(
-            stream: _firebaseService.isWatchlisted(_episodeDetails!['id'] ?? 0),
-            builder: (context, snapshot) {
-              final inWatchlist = snapshot.data ?? false;
-              return ElevatedButton.icon(
-                onPressed: () {
-                  _firebaseService.toggleWatchlist(
-                    _episodeDetails!['id'] ?? 0,
-                    'episode',
-                    _episodeDetails!['name'] ?? 'Unknown',
-                    _episodeDetails!['still_path'] ?? '',
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              height: 45,
+              child: StreamBuilder<bool>(
+                stream: _firebaseService.isWatchlisted(
+                  _episodeDetails?['id'] ?? 0,
+                ),
+                builder: (context, snapshot) {
+                  final inWatchlist = snapshot.data ?? false;
+                  return ElevatedButton.icon(
+                    onPressed: () {
+                      _firebaseService.toggleWatchlist(
+                        id: _episodeDetails!['id'] ?? 0,
+                        type: 'episode',
+                        details: _episodeDetails ?? {},
+                      );
+                    },
+                    icon: Icon(
+                      inWatchlist ? Icons.check : Icons.add,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                    label: Text(
+                      inWatchlist ? 'Added to List' : 'My List',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: inWatchlist
+                          ? Colors.white.withAlpha(60)
+                          : Colors.white.withAlpha(30),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
                   );
                 },
-                icon: Icon(
-                  inWatchlist ? Icons.check : Icons.add,
-                  color: Colors.white,
-                  size: 28,
-                ),
-                label: Text(
-                  inWatchlist ? 'Added to List' : 'My List',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: inWatchlist
-                      ? Colors.white.withAlpha(60)
-                      : Colors.white.withAlpha(30),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 

@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:rxdart/rxdart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class FirebaseService {
@@ -24,6 +25,7 @@ class FirebaseService {
 
   // Local Storage Keys
   static const String _userPrefsKey = 'user_data';
+  static const String _languagePrefsKey = 'user_language';
 
   // Helper to run Firestore operations with retry logic
   Future<T> _runWithRetry<T>(
@@ -36,7 +38,6 @@ class FirebaseService {
         return await action();
       } on FirebaseException catch (e) {
         attempt++;
-        // 'unavailable' error is common on first runs or connectivity issues
         if (e.code == 'unavailable' && attempt < retries) {
           print(
             'FIRESTORE: Service unavailable, retrying in ${attempt * 2}s (Attempt $attempt)...',
@@ -97,12 +98,32 @@ class FirebaseService {
     }
   }
 
-  Future<void> toggleWatchlist(
-    int id,
-    String type,
-    String title,
-    String posterPath,
-  ) async {
+  Future<void> setLanguage(String code) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_languagePrefsKey, code);
+      if (currentUser != null) {
+        await _usersCollection.doc(currentUser!.uid).update({'language': code});
+      }
+    } catch (e) {
+      print('SET LANGUAGE ERROR: $e');
+    }
+  }
+
+  Future<String> getLanguage() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_languagePrefsKey) ?? 'en';
+    } catch (e) {
+      return 'en';
+    }
+  }
+
+  Future<void> toggleWatchlist({
+    required int id,
+    required String type,
+    required Map<String, dynamic> details,
+  }) async {
     final user = currentUser;
     if (user == null) return;
 
@@ -118,23 +139,23 @@ class FirebaseService {
       if (doc.exists) {
         await docRef.delete();
       } else {
-        await docRef.set({
-          'id': id,
-          'type': type,
-          'title': title,
-          'poster_path': posterPath,
-          'added_at': FieldValue.serverTimestamp(),
-        });
+        final Map<String, dynamic> uploadData = Map<String, dynamic>.from(
+          details,
+        );
+        uploadData['id'] = id;
+        uploadData['type'] = type;
+        uploadData['added_at'] = FieldValue.serverTimestamp();
+
+        await docRef.set(uploadData);
       }
     });
   }
 
-  Future<void> toggleFavorite(
-    int id,
-    String type,
-    String title,
-    String posterPath,
-  ) async {
+  Future<void> toggleFavorite({
+    required int id,
+    required String type,
+    required Map<String, dynamic> details,
+  }) async {
     final user = currentUser;
     if (user == null) return;
 
@@ -144,7 +165,6 @@ class FirebaseService {
           .collection('favorites')
           .doc(id.toString());
 
-      // Attempt to get document with cache awareness
       final doc = await docRef.get(
         const GetOptions(source: Source.serverAndCache),
       );
@@ -152,14 +172,146 @@ class FirebaseService {
       if (doc.exists) {
         await docRef.delete();
       } else {
-        await docRef.set({
-          'id': id,
-          'type': type,
-          'title': title,
-          'poster_path': posterPath,
-          'added_at': FieldValue.serverTimestamp(),
-        });
+        final Map<String, dynamic> uploadData = Map<String, dynamic>.from(
+          details,
+        );
+        uploadData['id'] = id;
+        uploadData['type'] = type;
+        uploadData['added_at'] = FieldValue.serverTimestamp();
+
+        await docRef.set(uploadData);
       }
+    });
+  }
+
+  Stream<bool> isFavorited(int id) {
+    final user = currentUser;
+    if (user == null) return Stream.value(false);
+    return _usersCollection
+        .doc(user.uid)
+        .collection('favorites')
+        .doc(id.toString())
+        .snapshots(includeMetadataChanges: true)
+        .map((doc) => doc.exists);
+  }
+
+  Stream<Map<String, dynamic>> getLibraryStats() {
+    final user = currentUser;
+    if (user == null) return Stream.value({});
+
+    final favorites = _usersCollection
+        .doc(user.uid)
+        .collection('favorites')
+        .snapshots();
+    final watching = _usersCollection
+        .doc(user.uid)
+        .collection('watching')
+        .snapshots();
+    final completed = _usersCollection
+        .doc(user.uid)
+        .collection('completed')
+        .snapshots();
+    final watchlist = _usersCollection
+        .doc(user.uid)
+        .collection('watchlist')
+        .snapshots();
+
+    return CombineLatestStream.list([
+      favorites,
+      watching,
+      completed,
+      watchlist,
+    ]).map((snapshots) {
+      final favDocs = snapshots[0].docs;
+      final watchingDocs = snapshots[1].docs;
+      final completedDocs = snapshots[2].docs;
+      final watchlistDocs = snapshots[3].docs;
+
+      int movieMins = 0;
+      int tvMins = 0;
+      int movieCount = 0;
+      int showCount = 0;
+      int episodeCount = 0;
+
+      Map<String, int> movieGenres = {};
+      Map<String, int> tvGenres = {};
+
+      for (var doc in completedDocs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final type = data['type'] ?? 'movie';
+        final runtime = data['runtime'] ?? 0;
+        final genres = data['genres'] as List?;
+
+        if (type == 'movie') {
+          movieMins += (runtime as int);
+          movieCount++;
+          if (genres != null) {
+            for (var g in genres) {
+              final n = g['name'] as String?;
+              if (n != null) movieGenres[n] = (movieGenres[n] ?? 0) + 1;
+            }
+          }
+        } else {
+          tvMins += (runtime as int);
+          if (type == 'tv') showCount++;
+          if (type == 'episode') episodeCount++;
+          if (genres != null) {
+            for (var g in genres) {
+              final n = g['name'] as String?;
+              if (n != null) tvGenres[n] = (tvGenres[n] ?? 0) + 1;
+            }
+          }
+        }
+      }
+
+      final totalMinutes = movieMins + tvMins;
+
+      // Top Movie Genres
+      final sortedMovieGenres = movieGenres.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      final topMovieGenres = sortedMovieGenres
+          .take(3)
+          .map(
+            (e) => {
+              'name': e.key,
+              'percentage': movieCount == 0 ? 0.0 : e.value / movieCount,
+            },
+          )
+          .toList();
+
+      // Top TV Genres
+      final sortedTvGenres = tvGenres.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      final topTvGenres = sortedTvGenres
+          .take(3)
+          .map(
+            (e) => {
+              'name': e.key,
+              'percentage': (showCount + episodeCount) == 0
+                  ? 0.0
+                  : e.value / (showCount + episodeCount),
+            },
+          )
+          .toList();
+
+      return {
+        'favorites': favDocs.length,
+        'watching': watchingDocs.length,
+        'completed': completedDocs.length,
+        'watchlist': watchlistDocs.length,
+        'watchTimeHrs': (totalMinutes / 60).toStringAsFixed(1),
+        'movieMinutes': movieMins,
+        'tvMinutes': tvMins,
+        'movies': movieCount,
+        'shows': showCount,
+        'episodes': episodeCount,
+        'topMovieGenres': topMovieGenres,
+        'topTvGenres': topTvGenres,
+        'completionRate': (watchlistDocs.length + completedDocs.length) == 0
+            ? 0.0
+            : completedDocs.length /
+                  (watchlistDocs.length + completedDocs.length),
+      };
     });
   }
 
@@ -174,15 +326,114 @@ class FirebaseService {
         .map((doc) => doc.exists);
   }
 
-  Stream<bool> isFavorited(int id) {
+  Future<void> markAsCompleted({
+    required int id,
+    required String type,
+    required Map<String, dynamic> details,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+
+    await _runWithRetry(() async {
+      // 1. Add to completed
+      final completedDoc = _usersCollection
+          .doc(user.uid)
+          .collection('completed')
+          .doc(id.toString());
+
+      final Map<String, dynamic> uploadData = Map<String, dynamic>.from(
+        details,
+      );
+      uploadData['id'] = id;
+      uploadData['type'] = type;
+      uploadData['completed_at'] = FieldValue.serverTimestamp();
+
+      await completedDoc.set(uploadData, SetOptions(merge: true));
+
+      // 2. Remove from watching
+      await _usersCollection
+          .doc(user.uid)
+          .collection('watching')
+          .doc(id.toString())
+          .delete();
+    });
+  }
+
+  Stream<QuerySnapshot> getCompletedStream() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    return _usersCollection
+        .doc(user.uid)
+        .collection('completed')
+        .orderBy('completed_at', descending: true)
+        .snapshots(includeMetadataChanges: true);
+  }
+
+  Stream<bool> isWatching(int id) {
     final user = currentUser;
     if (user == null) return Stream.value(false);
     return _usersCollection
         .doc(user.uid)
-        .collection('favorites')
+        .collection('watching')
         .doc(id.toString())
-        .snapshots(includeMetadataChanges: true)
+        .snapshots()
         .map((doc) => doc.exists);
+  }
+
+  Stream<bool> isCompleted(int id) {
+    final user = currentUser;
+    if (user == null) return Stream.value(false);
+    return _usersCollection
+        .doc(user.uid)
+        .collection('completed')
+        .doc(id.toString())
+        .snapshots()
+        .map((doc) => doc.exists);
+  }
+
+  Future<void> addToWatching({
+    required int id,
+    required String type,
+    required Map<String, dynamic> details,
+  }) async {
+    final user = currentUser;
+    if (user == null) return;
+
+    await _runWithRetry(() async {
+      final docRef = _usersCollection
+          .doc(user.uid)
+          .collection('watching')
+          .doc(id.toString());
+
+      final Map<String, dynamic> uploadData = Map<String, dynamic>.from(
+        details,
+      );
+      uploadData['id'] = id;
+      uploadData['type'] = type;
+      uploadData['updated_at'] = FieldValue.serverTimestamp();
+
+      await docRef.set(uploadData, SetOptions(merge: true));
+    });
+  }
+
+  Stream<QuerySnapshot> getWatchingStream() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    return _usersCollection
+        .doc(user.uid)
+        .collection('watching')
+        .orderBy('updated_at', descending: true)
+        .snapshots(includeMetadataChanges: true);
+  }
+
+  Stream<QuerySnapshot> getWatchlistStream() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    return _usersCollection
+        .doc(user.uid)
+        .collection('watchlist')
+        .orderBy('added_at', descending: true)
+        .snapshots(includeMetadataChanges: true);
   }
 
   Stream<QuerySnapshot> getFavoritesStream() {
@@ -193,6 +444,42 @@ class FirebaseService {
         .collection('favorites')
         .orderBy('added_at', descending: true)
         .snapshots(includeMetadataChanges: true);
+  }
+
+  Stream<List<Map<String, dynamic>>> getAllLibraryItemsStream() {
+    final user = currentUser;
+    if (user == null) return Stream.value([]);
+
+    final f = _usersCollection
+        .doc(user.uid)
+        .collection('favorites')
+        .snapshots();
+    final w = _usersCollection.doc(user.uid).collection('watching').snapshots();
+    final c = _usersCollection
+        .doc(user.uid)
+        .collection('completed')
+        .snapshots();
+    final l = _usersCollection
+        .doc(user.uid)
+        .collection('watchlist')
+        .snapshots();
+
+    return CombineLatestStream.list([f, w, c, l]).map((snapshots) {
+      final List<Map<String, dynamic>> items = [];
+      final Set<int> seenIds = {};
+
+      for (var snap in snapshots) {
+        for (var doc in snap.docs) {
+          final data = doc.data() as Map<String, dynamic>;
+          final id = data['id'] as int?;
+          if (id != null && !seenIds.contains(id)) {
+            items.add(data);
+            seenIds.add(id);
+          }
+        }
+      }
+      return items;
+    });
   }
 
   Future<void> signUp({
@@ -216,6 +503,7 @@ class FirebaseService {
           'email': email,
           'mobile': mobile,
           'created_at': FieldValue.serverTimestamp(),
+          'language': 'en',
         };
 
         await _runWithRetry(() async {
@@ -256,7 +544,12 @@ class FirebaseService {
         });
 
         if (doc.exists) {
-          return doc.data() as Map<String, dynamic>;
+          final data = doc.data() as Map<String, dynamic>;
+          if (data['language'] != null) {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(_languagePrefsKey, data['language']);
+          }
+          return data;
         } else {
           return {'uid': credential.user!.uid, 'email': email};
         }
