@@ -119,4 +119,20 @@ class ApiService {
     print('API REQUEST [fetchGenres ($type)]: $url');
     return _getWithRetry(url);
   }
+
+  Future<Map<String, dynamic>> fetchWatchProviders(String type, int id) async {
+    final url = Uri.parse(
+      '$_baseUrl/$type/$id/watch/providers?api_key=$_apiKey',
+    );
+    print('API REQUEST [fetchWatchProviders ($type)]: $url');
+    return _getWithRetry(url);
+  }
+
+  Future<Map<String, dynamic>> searchMulti(String query, int page) async {
+    final url = Uri.parse(
+      '$_baseUrl/search/multi?api_key=$_apiKey&query=${Uri.encodeComponent(query)}&page=$page',
+    );
+    print('API REQUEST [searchMulti]: $url');
+    return _getWithRetry(url);
+  }
 }

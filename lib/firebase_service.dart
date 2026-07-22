@@ -369,6 +369,36 @@ class FirebaseService {
         .snapshots(includeMetadataChanges: true);
   }
 
+  Stream<QuerySnapshot> getWatchingStream() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    return _usersCollection
+        .doc(user.uid)
+        .collection('watching')
+        .orderBy('updated_at', descending: true)
+        .snapshots(includeMetadataChanges: true);
+  }
+
+  Stream<QuerySnapshot> getWatchlistStream() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    return _usersCollection
+        .doc(user.uid)
+        .collection('watchlist')
+        .orderBy('added_at', descending: true)
+        .snapshots(includeMetadataChanges: true);
+  }
+
+  Stream<QuerySnapshot> getFavoritesStream() {
+    final user = currentUser;
+    if (user == null) return const Stream.empty();
+    return _usersCollection
+        .doc(user.uid)
+        .collection('favorites')
+        .orderBy('added_at', descending: true)
+        .snapshots(includeMetadataChanges: true);
+  }
+
   Stream<bool> isWatching(int id) {
     final user = currentUser;
     if (user == null) return Stream.value(false);
@@ -414,36 +444,6 @@ class FirebaseService {
 
       await docRef.set(uploadData, SetOptions(merge: true));
     });
-  }
-
-  Stream<QuerySnapshot> getWatchingStream() {
-    final user = currentUser;
-    if (user == null) return const Stream.empty();
-    return _usersCollection
-        .doc(user.uid)
-        .collection('watching')
-        .orderBy('updated_at', descending: true)
-        .snapshots(includeMetadataChanges: true);
-  }
-
-  Stream<QuerySnapshot> getWatchlistStream() {
-    final user = currentUser;
-    if (user == null) return const Stream.empty();
-    return _usersCollection
-        .doc(user.uid)
-        .collection('watchlist')
-        .orderBy('added_at', descending: true)
-        .snapshots(includeMetadataChanges: true);
-  }
-
-  Stream<QuerySnapshot> getFavoritesStream() {
-    final user = currentUser;
-    if (user == null) return const Stream.empty();
-    return _usersCollection
-        .doc(user.uid)
-        .collection('favorites')
-        .orderBy('added_at', descending: true)
-        .snapshots(includeMetadataChanges: true);
   }
 
   Stream<List<Map<String, dynamic>>> getAllLibraryItemsStream() {

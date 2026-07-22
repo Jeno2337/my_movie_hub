@@ -26,10 +26,12 @@ class _DashboardScreenState extends State<DashboardScreen>
   final List<Movie> _movies = [];
   List<Movie> _trendingMovies = [];
   final List<Movie> _discoverMovies = [];
+  final List<Movie> _searchResults = [];
   List<dynamic> _genres = [];
 
   int _currentPage = 1;
   int _discoverPage = 1;
+  int _searchPage = 1;
   int _totalMoviesCount = 0;
   int _totalSeriesCount = 0;
   int? _selectedGenreId;
@@ -38,13 +40,18 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isTrendingLoading = false;
   bool _isDiscoverLoading = false;
   bool _isGenresLoading = false;
+  bool _isSearchLoading = false;
 
   bool _hasMore = true;
   bool _discoverHasMore = true;
+  bool _searchHasMore = true;
+  bool _isSearching = false;
 
   String _homeType = 'movie';
   String _libraryType = 'movie';
   String _discoverType = 'movie';
+
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -53,6 +60,82 @@ class _DashboardScreenState extends State<DashboardScreen>
     _scrollController.addListener(_onScroll);
     _discoverScrollController.addListener(_onDiscoverScroll);
     _initializeData();
+  }
+
+  Future<void> _performSearch(String query) async {
+    if (query.isEmpty) {
+      setState(() {
+        _isSearching = false;
+        _searchResults.clear();
+      });
+      return;
+    }
+
+    setState(() {
+      _isSearching = true;
+      _isSearchLoading = true;
+      _searchResults.clear();
+      _searchPage = 1;
+    });
+
+    try {
+      debugPrint('API TASK: Performing Multi-Search for "$query"');
+      final data = await _apiService.searchMulti(query, _searchPage);
+      final List results = data['results'] ?? [];
+
+      if (mounted) {
+        setState(() {
+          _searchResults.addAll(
+            results
+                .where(
+                  (m) => m['media_type'] == 'movie' || m['media_type'] == 'tv',
+                )
+                .map((m) => Movie.fromJson(m))
+                .toList(),
+          );
+          _searchHasMore = _searchPage < (data['total_pages'] ?? 1);
+          _isSearchLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('API ERROR: Search failed: $e');
+      if (mounted) setState(() => _isSearchLoading = false);
+    }
+  }
+
+  Future<void> _fetchMoreSearchResults() async {
+    if (_isSearchLoading || !_searchHasMore) return;
+    setState(() => _isSearchLoading = true);
+
+    try {
+      _searchPage++;
+      debugPrint(
+        'API TASK: Fetching more search results for "${_searchController.text}", Page: $_searchPage',
+      );
+      final data = await _apiService.searchMulti(
+        _searchController.text,
+        _searchPage,
+      );
+      final List results = data['results'] ?? [];
+
+      if (mounted) {
+        setState(() {
+          _searchResults.addAll(
+            results
+                .where(
+                  (m) => m['media_type'] == 'movie' || m['media_type'] == 'tv',
+                )
+                .map((m) => Movie.fromJson(m))
+                .toList(),
+          );
+          _searchHasMore = _searchPage < (data['total_pages'] ?? 1);
+          _isSearchLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('API ERROR: More search results failed: $e');
+      if (mounted) setState(() => _isSearchLoading = false);
+    }
   }
 
   Future<void> _initializeData() async {
@@ -66,6 +149,8 @@ class _DashboardScreenState extends State<DashboardScreen>
       _discoverMovies.clear();
       _currentPage = 1;
       _discoverPage = 1;
+      _isSearching = false; // Reset search mode on init
+      _searchController.clear();
     });
 
     _fetchGenres();
@@ -239,7 +324,11 @@ class _DashboardScreenState extends State<DashboardScreen>
             _discoverScrollController.position.maxScrollExtent - 400 &&
         !_isDiscoverLoading &&
         _discoverHasMore) {
-      _fetchDiscoverTab();
+      if (_isSearching) {
+        _fetchMoreSearchResults();
+      } else {
+        _fetchDiscoverTab();
+      }
     }
   }
 
@@ -465,15 +554,31 @@ class _DashboardScreenState extends State<DashboardScreen>
     return StreamBuilder<QuerySnapshot>(
       stream: stream,
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          debugPrint('Firestore Stream Error: ${snapshot.error}');
+          return _buildPlaceholder('Error loading data');
+        }
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
             child: CircularProgressIndicator(color: Colors.white),
           );
         }
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+
+        // Manual filtering to avoid Firestore Index requirements
+        final allDocs = snapshot.data?.docs ?? [];
+        final docs = allDocs.where((doc) {
+          final data = doc.data() as Map<String, dynamic>;
+          final type = data['type'] ?? 'movie';
+          if (_libraryType == 'tv') {
+            return type == 'tv' || type == 'episode';
+          }
+          return type == 'movie';
+        }).toList();
+
+        if (docs.isEmpty) {
           return _buildPlaceholder(emptyMessage);
         }
-        final docs = snapshot.data!.docs;
+
         return GridView.builder(
           padding: const EdgeInsets.all(20),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -505,15 +610,31 @@ class _DashboardScreenState extends State<DashboardScreen>
     return StreamBuilder<QuerySnapshot>(
       stream: _firebaseService.getFavoritesStream(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          debugPrint('Firestore Stream Error: ${snapshot.error}');
+          return _buildPlaceholder('Error loading data');
+        }
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
             child: CircularProgressIndicator(color: Colors.white),
           );
         }
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+
+        // Manual filtering to avoid Firestore Index requirements
+        final allDocs = snapshot.data?.docs ?? [];
+        final favDocs = allDocs.where((doc) {
+          final data = doc.data() as Map<String, dynamic>;
+          final type = data['type'] ?? 'movie';
+          if (_libraryType == 'tv') {
+            return type == 'tv' || type == 'episode';
+          }
+          return type == 'movie';
+        }).toList();
+
+        if (favDocs.isEmpty) {
           return _buildPlaceholder('No favorites yet');
         }
-        final favDocs = snapshot.data!.docs;
+
         return GridView.builder(
           padding: const EdgeInsets.all(20),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -579,27 +700,28 @@ class _DashboardScreenState extends State<DashboardScreen>
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'Discover',
-                style: TextStyle(
+              Text(
+                _isSearching ? 'Results' : 'Discover',
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              _buildTypeDropdown(_discoverType, (val) {
-                if (val != null) {
-                  setState(() {
-                    _discoverType = val;
-                    _discoverMovies.clear();
-                    _discoverPage = 1;
-                    _discoverHasMore = true;
-                    _selectedGenreId = null;
-                  });
-                  _fetchGenres();
-                  _fetchDiscoverTab();
-                }
-              }),
+              if (!_isSearching)
+                _buildTypeDropdown(_discoverType, (val) {
+                  if (val != null) {
+                    setState(() {
+                      _discoverType = val;
+                      _discoverMovies.clear();
+                      _discoverPage = 1;
+                      _discoverHasMore = true;
+                      _selectedGenreId = null;
+                    });
+                    _fetchGenres();
+                    _fetchDiscoverTab();
+                  }
+                }),
             ],
           ),
         ),
@@ -607,11 +729,22 @@ class _DashboardScreenState extends State<DashboardScreen>
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: TextField(
+            controller: _searchController,
+            onChanged: _performSearch,
             style: const TextStyle(color: Colors.white),
             decoration: InputDecoration(
               hintText: 'Search shows & Movies',
               hintStyle: const TextStyle(color: Colors.white38),
               prefixIcon: const Icon(Icons.search, color: Colors.white38),
+              suffixIcon: _isSearching
+                  ? IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white38),
+                      onPressed: () {
+                        _searchController.clear();
+                        _performSearch('');
+                      },
+                    )
+                  : null,
               filled: true,
               fillColor: const Color(0xFF1E1E1E),
               isDense: true,
@@ -626,17 +759,24 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
         ),
-        const SizedBox(height: 15),
-        _buildGenreTabBar(),
+        if (!_isSearching) ...[const SizedBox(height: 15), _buildGenreTabBar()],
         const SizedBox(height: 10),
         Expanded(
-          child: _buildMovieGrid(
-            movies: _discoverMovies,
-            controller: _discoverScrollController,
-            type: _discoverType,
-            isLoading: _isDiscoverLoading,
-            hasMore: _discoverHasMore,
-          ),
+          child: _isSearching
+              ? _buildMovieGrid(
+                  movies: _searchResults,
+                  controller: _discoverScrollController,
+                  type: 'movie',
+                  isLoading: _isSearchLoading,
+                  hasMore: _searchHasMore,
+                )
+              : _buildMovieGrid(
+                  movies: _discoverMovies,
+                  controller: _discoverScrollController,
+                  type: _discoverType,
+                  isLoading: _isDiscoverLoading,
+                  hasMore: _discoverHasMore,
+                ),
         ),
       ],
     );
@@ -1232,13 +1372,25 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget _buildMovieCard(Movie movie, String type) {
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) =>
-              MovieDetailScreen(movieId: movie.id, contentType: type),
-        ),
-      ),
+      onTap: () {
+        // Correct navigation for search results which can be either movies or tv
+        String effectiveType = type;
+        if (_isSearching) {
+          // If title is not empty, it's likely a movie in our current Movie model mapping
+          // (TMDB 'name' maps to series, 'title' maps to movie)
+          effectiveType = movie.title.isNotEmpty ? 'movie' : 'tv';
+        }
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MovieDetailScreen(
+              movieId: movie.id,
+              contentType: effectiveType,
+            ),
+          ),
+        );
+      },
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(15),
