@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import 'api_service.dart';
@@ -20,8 +21,6 @@ class _DashboardScreenState extends State<DashboardScreen>
   late TabController _tabController;
   final ApiService _apiService = ApiService();
   final FirebaseService _firebaseService = FirebaseService();
-  final ScrollController _scrollController = ScrollController();
-  final ScrollController _discoverScrollController = ScrollController();
 
   final List<Movie> _movies = [];
   List<Movie> _trendingMovies = [];
@@ -36,15 +35,16 @@ class _DashboardScreenState extends State<DashboardScreen>
   int _totalSeriesCount = 0;
   int? _selectedGenreId;
 
+  int _totalPages = 1;
+  int _discoverTotalPages = 1;
+  int _searchTotalPages = 1;
+
   bool _isLoading = false;
   bool _isTrendingLoading = false;
   bool _isDiscoverLoading = false;
   bool _isGenresLoading = false;
   bool _isSearchLoading = false;
 
-  bool _hasMore = true;
-  bool _discoverHasMore = true;
-  bool _searchHasMore = true;
   bool _isSearching = false;
 
   String _homeType = 'movie';
@@ -57,12 +57,10 @@ class _DashboardScreenState extends State<DashboardScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
-    _scrollController.addListener(_onScroll);
-    _discoverScrollController.addListener(_onDiscoverScroll);
     _initializeData();
   }
 
-  Future<void> _performSearch(String query) async {
+  Future<void> _performSearch(String query, {int page = 1}) async {
     if (query.isEmpty) {
       setState(() {
         _isSearching = false;
@@ -74,17 +72,17 @@ class _DashboardScreenState extends State<DashboardScreen>
     setState(() {
       _isSearching = true;
       _isSearchLoading = true;
-      _searchResults.clear();
-      _searchPage = 1;
+      _searchPage = page;
     });
 
     try {
-      debugPrint('API TASK: Performing Multi-Search for "$query"');
-      final data = await _apiService.searchMulti(query, _searchPage);
+      debugPrint('API TASK: Performing Multi-Search for "$query", Page: $page');
+      final data = await _apiService.searchMulti(query, page);
       final List results = data['results'] ?? [];
 
       if (mounted) {
         setState(() {
+          _searchResults.clear();
           _searchResults.addAll(
             results
                 .where(
@@ -93,7 +91,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 .map((m) => Movie.fromJson(m))
                 .toList(),
           );
-          _searchHasMore = _searchPage < (data['total_pages'] ?? 1);
+          _searchTotalPages = data['total_pages'] ?? 1;
           _isSearchLoading = false;
         });
       }
@@ -103,60 +101,25 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
   }
 
-  Future<void> _fetchMoreSearchResults() async {
-    if (_isSearchLoading || !_searchHasMore) return;
-    setState(() => _isSearchLoading = true);
-
-    try {
-      _searchPage++;
-      debugPrint(
-        'API TASK: Fetching more search results for "${_searchController.text}", Page: $_searchPage',
-      );
-      final data = await _apiService.searchMulti(
-        _searchController.text,
-        _searchPage,
-      );
-      final List results = data['results'] ?? [];
-
-      if (mounted) {
-        setState(() {
-          _searchResults.addAll(
-            results
-                .where(
-                  (m) => m['media_type'] == 'movie' || m['media_type'] == 'tv',
-                )
-                .map((m) => Movie.fromJson(m))
-                .toList(),
-          );
-          _searchHasMore = _searchPage < (data['total_pages'] ?? 1);
-          _isSearchLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('API ERROR: More search results failed: $e');
-      if (mounted) setState(() => _isSearchLoading = false);
-    }
-  }
-
   Future<void> _initializeData() async {
     final language = await _firebaseService.getLanguage();
     setState(() {
-      _isLoading = true;
-      _isTrendingLoading = true;
-      _isDiscoverLoading = true;
+      _isLoading = false;
+      _isTrendingLoading = false;
+      _isDiscoverLoading = false;
       _movies.clear();
       _trendingMovies.clear();
       _discoverMovies.clear();
       _currentPage = 1;
       _discoverPage = 1;
-      _isSearching = false; // Reset search mode on init
+      _isSearching = false;
       _searchController.clear();
     });
 
     _fetchGenres();
     _fetchTrending(languageCode: language);
-    _fetchDiscover(languageCode: language);
-    _fetchDiscoverTab(languageCode: language);
+    _fetchDiscover(page: 1, languageCode: language);
+    _fetchDiscoverTab(page: 1, languageCode: language);
   }
 
   Future<void> _fetchGenres() async {
@@ -218,20 +181,17 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
   }
 
-  Future<void> _fetchDiscover({String? languageCode}) async {
+  Future<void> _fetchDiscover({int page = 1, String? languageCode}) async {
     final lang = languageCode ?? await _firebaseService.getLanguage();
-    // Removed the guard that was incorrectly blocking the initial fetch
     if (mounted) setState(() => _isLoading = true);
 
     try {
-      debugPrint(
-        'API TASK: Fetching Library All (Discover $_libraryType) for lang: $lang, Region: IN',
-      );
+      debugPrint('API TASK: Fetching Library All, Page: $page, Region: IN');
       final data = await _apiService.fetchDiscover(
         _libraryType,
-        _currentPage,
+        page,
         languageCode: lang,
-        region: 'IN', // Added region filter for India
+        region: 'IN',
       );
       final List<dynamic> results = data['results'] ?? [];
       final List<Movie> newMovies = results
@@ -240,14 +200,15 @@ class _DashboardScreenState extends State<DashboardScreen>
 
       if (mounted) {
         setState(() {
+          _movies.clear();
           _movies.addAll(newMovies);
-          _currentPage++;
+          _currentPage = page;
+          _totalPages = data['total_pages'] ?? 1;
           if (_libraryType == 'movie') {
             _totalMoviesCount = data['total_results'] ?? 0;
           } else {
             _totalSeriesCount = data['total_results'] ?? 0;
           }
-          _hasMore = _currentPage <= (data['total_pages'] ?? 0);
           _isLoading = false;
         });
       }
@@ -255,31 +216,19 @@ class _DashboardScreenState extends State<DashboardScreen>
       debugPrint('API ERROR: Failed to fetch library discover: $e');
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Failed to load library content.'),
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: () => _fetchDiscover(languageCode: languageCode),
-              textColor: Colors.white,
-            ),
-          ),
-        );
       }
     }
   }
 
-  Future<void> _fetchDiscoverTab({String? languageCode}) async {
+  Future<void> _fetchDiscoverTab({int page = 1, String? languageCode}) async {
     final lang = languageCode ?? await _firebaseService.getLanguage();
     if (mounted) setState(() => _isDiscoverLoading = true);
 
     try {
-      debugPrint(
-        'API TASK: Fetching Discover Tab ($_discoverType) for lang: $lang, Page: $_discoverPage',
-      );
+      debugPrint('API TASK: Fetching Discover Tab, Page: $page');
       final data = await _apiService.fetchDiscover(
         _discoverType,
-        _discoverPage,
+        page,
         genreId: _selectedGenreId,
         languageCode: lang,
       );
@@ -290,46 +239,31 @@ class _DashboardScreenState extends State<DashboardScreen>
 
       if (mounted) {
         setState(() {
+          _discoverMovies.clear();
           _discoverMovies.addAll(newMovies);
-          _discoverPage++;
-          _discoverHasMore = _discoverPage <= (data['total_pages'] ?? 0);
+          _discoverPage = page;
+          _discoverTotalPages = data['total_pages'] ?? 1;
+          if (_discoverType == 'movie') {
+            _totalMoviesCount = data['total_results'] ?? 0;
+          } else {
+            _totalSeriesCount = data['total_results'] ?? 0;
+          }
           _isDiscoverLoading = false;
         });
       }
     } catch (e) {
       debugPrint('API ERROR: Failed to fetch discover tab: $e');
-      if (mounted) setState(() => _isDiscoverLoading = false);
+      if (mounted) {
+        setState(() => _isDiscoverLoading = false);
+      }
     }
   }
 
   @override
   void dispose() {
     _tabController.dispose();
-    _scrollController.dispose();
-    _discoverScrollController.dispose();
+    _searchController.dispose();
     super.dispose();
-  }
-
-  void _onScroll() {
-    if (_scrollController.position.pixels >=
-            _scrollController.position.maxScrollExtent - 400 &&
-        !_isLoading &&
-        _hasMore) {
-      _fetchDiscover();
-    }
-  }
-
-  void _onDiscoverScroll() {
-    if (_discoverScrollController.position.pixels >=
-            _discoverScrollController.position.maxScrollExtent - 400 &&
-        !_isDiscoverLoading &&
-        _discoverHasMore) {
-      if (_isSearching) {
-        _fetchMoreSearchResults();
-      } else {
-        _fetchDiscoverTab();
-      }
-    }
   }
 
   void _onItemTapped(int index) {
@@ -456,9 +390,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                         _libraryType = val;
                         _movies.clear();
                         _currentPage = 1;
-                        _hasMore = true;
                       });
-                      _fetchDiscover();
+                      _fetchDiscover(page: 1);
                     }
                   }),
                 ],
@@ -526,8 +459,11 @@ class _DashboardScreenState extends State<DashboardScreen>
         children: [
           _buildMovieGrid(
             movies: _movies,
-            controller: _scrollController,
             type: _libraryType,
+            isLoading: _isLoading,
+            currentPage: _currentPage,
+            totalPages: _totalPages,
+            onPageChanged: (p) => _fetchDiscover(page: p),
           ),
           _buildFirestoreStreamGrid(
             _firebaseService.getWatchingStream(),
@@ -715,11 +651,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                       _discoverType = val;
                       _discoverMovies.clear();
                       _discoverPage = 1;
-                      _discoverHasMore = true;
                       _selectedGenreId = null;
                     });
                     _fetchGenres();
-                    _fetchDiscoverTab();
+                    _fetchDiscoverTab(page: 1);
                   }
                 }),
             ],
@@ -730,7 +665,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: TextField(
             controller: _searchController,
-            onChanged: _performSearch,
+            onChanged: (val) => _performSearch(val, page: 1),
             style: const TextStyle(color: Colors.white),
             decoration: InputDecoration(
               hintText: 'Search shows & Movies',
@@ -741,7 +676,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                       icon: const Icon(Icons.close, color: Colors.white38),
                       onPressed: () {
                         _searchController.clear();
-                        _performSearch('');
+                        _performSearch('', page: 1);
                       },
                     )
                   : null,
@@ -765,17 +700,20 @@ class _DashboardScreenState extends State<DashboardScreen>
           child: _isSearching
               ? _buildMovieGrid(
                   movies: _searchResults,
-                  controller: _discoverScrollController,
                   type: 'movie',
                   isLoading: _isSearchLoading,
-                  hasMore: _searchHasMore,
+                  currentPage: _searchPage,
+                  totalPages: _searchTotalPages,
+                  onPageChanged: (p) =>
+                      _performSearch(_searchController.text, page: p),
                 )
               : _buildMovieGrid(
                   movies: _discoverMovies,
-                  controller: _discoverScrollController,
                   type: _discoverType,
                   isLoading: _isDiscoverLoading,
-                  hasMore: _discoverHasMore,
+                  currentPage: _discoverPage,
+                  totalPages: _discoverTotalPages,
+                  onPageChanged: (p) => _fetchDiscoverTab(page: p),
                 ),
         ),
       ],
@@ -803,9 +741,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                 _selectedGenreId = isAll ? null : genre['id'];
                 _discoverMovies.clear();
                 _discoverPage = 1;
-                _discoverHasMore = true;
               });
-              _fetchDiscoverTab();
+              _fetchDiscoverTab(page: 1);
             },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 15),
@@ -890,28 +827,613 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
               const SizedBox(height: 25),
               _buildCompletionCard(stats['completionRate'] ?? 0.0),
-              const SizedBox(height: 30),
-              _buildSectionTitle('Movie Insights'),
-              _buildSmallStatCard(
-                stats['movies']?.toString() ?? '0',
-                'Movies Finished',
-              ),
-              _buildGenreReport(
-                stats['topMovieGenres'] as List?,
-                'Top Movie Genres',
-              ),
-              const SizedBox(height: 30),
-              _buildSectionTitle('TV Series Insights'),
-              _buildSmallStatCard(
-                stats['shows']?.toString() ?? '0',
-                'Series Finished',
-              ),
-              _buildGenreReport(stats['topTvGenres'] as List?, 'Top TV Genres'),
+              const SizedBox(height: 35),
+
+              _buildSectionTitle('Weekly Watch Trends'),
+              _buildWeeklyLineChart(stats['weeklyData'] as Map<int, int>?),
+              const SizedBox(height: 35),
+
+              _buildSectionTitle('Monthly Activity'),
+              _buildMonthlyBarChart(stats['monthlyData'] as Map<int, int>?),
+              const SizedBox(height: 35),
+
+              _buildSectionTitle('Bucket List Status'),
+              _buildBucketListDashboard(stats),
+              const SizedBox(height: 20),
+              _buildBucketListChart(stats),
+              const SizedBox(height: 35),
+
+              _buildSectionTitle('Recently Favorited'),
+              _buildRecentFavorites(stats['recentFavs'] as List?),
+              const SizedBox(height: 35),
+
+              _buildSectionTitle('Your Cinema DNA'),
+              _buildCinemaArchetype(stats['allFavGenres'] as List?),
+              const SizedBox(height: 15),
+              _buildFavoriteRadarChart(stats['allFavGenres'] as List?),
+              const SizedBox(height: 25),
+              _buildGenreDNAChips(stats['allFavGenres'] as List?),
+              const SizedBox(height: 35),
+
+              _buildSectionTitle('Movie Genre Breakdown'),
+              _buildFullGenreReport(stats['allMovieGenres'] as List?),
+              const SizedBox(height: 35),
+
+              _buildSectionTitle('Series Genre Breakdown'),
+              _buildFullGenreReport(stats['allTvGenres'] as List?),
               const SizedBox(height: 50),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildWeeklyLineChart(Map<int, int>? data) {
+    if (data == null) return const SizedBox(height: 150);
+
+    final List<FlSpot> spots = [];
+    for (int i = 1; i <= 7; i++) {
+      spots.add(FlSpot(i.toDouble(), (data[i] ?? 0) / 60.0));
+    }
+
+    return Container(
+      height: 200,
+      padding: const EdgeInsets.only(right: 20, top: 20, bottom: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: LineChart(
+        LineChartData(
+          gridData: const FlGridData(show: false),
+          titlesData: FlTitlesData(
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                getTitlesWidget: (val, meta) {
+                  const days = [
+                    'Mon',
+                    'Tue',
+                    'Wed',
+                    'Thu',
+                    'Fri',
+                    'Sat',
+                    'Sun',
+                  ];
+                  if (val < 1 || val > 7) return const Text('');
+                  return Text(
+                    days[val.toInt() - 1],
+                    style: const TextStyle(color: Colors.white38, fontSize: 10),
+                  );
+                },
+              ),
+            ),
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 30,
+                getTitlesWidget: (val, meta) => Text(
+                  '${val.toInt()}h',
+                  style: const TextStyle(color: Colors.white38, fontSize: 10),
+                ),
+              ),
+            ),
+          ),
+          borderData: FlBorderData(show: false),
+          lineBarsData: [
+            LineChartBarData(
+              spots: spots,
+              isCurved: true,
+              color: Colors.greenAccent,
+              barWidth: 4,
+              dotData: const FlDotData(show: false),
+              belowBarData: BarAreaData(
+                show: true,
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.greenAccent.withAlpha(50),
+                    Colors.transparent,
+                  ],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMonthlyBarChart(Map<int, int>? data) {
+    if (data == null) return const SizedBox(height: 150);
+
+    return Container(
+      height: 200,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: BarChart(
+        BarChartData(
+          gridData: const FlGridData(show: false),
+          titlesData: FlTitlesData(
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                getTitlesWidget: (val, meta) {
+                  return Text(
+                    'Week ${val.toInt()}',
+                    style: const TextStyle(color: Colors.white38, fontSize: 10),
+                  );
+                },
+              ),
+            ),
+          ),
+          borderData: FlBorderData(show: false),
+          barGroups: [1, 2, 3, 4, 5]
+              .map(
+                (w) => BarChartGroupData(
+                  x: w,
+                  barRods: [
+                    BarChartRodData(
+                      toY: (data[w] ?? 0) / 60.0,
+                      color: Colors.white,
+                      width: 15,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ],
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBucketListDashboard(Map<String, dynamic> stats) {
+    return Row(
+      children: [
+        Expanded(
+          child: _buildSmallStatCard(
+            stats['watchlist']?.toString() ?? '0',
+            'Pending in Bucket',
+          ),
+        ),
+        const SizedBox(width: 15),
+        Expanded(
+          child: _buildSmallStatCard(
+            '${((stats['completionRate'] ?? 0.0) * 100).toInt()}%',
+            'Completion Velocity',
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBucketListChart(Map<String, dynamic> stats) {
+    final int pending = stats['watchlist'] ?? 0;
+    final int completed = stats['completed'] ?? 0;
+    final int total = pending + completed;
+
+    if (total == 0) return const SizedBox.shrink();
+
+    return Container(
+      height: 180,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 2,
+            child: PieChart(
+              PieChartData(
+                sectionsSpace: 4,
+                centerSpaceRadius: 35,
+                sections: [
+                  PieChartSectionData(
+                    value: pending.toDouble(),
+                    title: '',
+                    color: Colors.white.withAlpha(50),
+                    radius: 12,
+                  ),
+                  PieChartSectionData(
+                    value: completed.toDouble(),
+                    title: '',
+                    color: Colors.greenAccent,
+                    radius: 15,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            flex: 3,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildChartLegend('Completed', Colors.greenAccent, completed),
+                const SizedBox(height: 12),
+                _buildChartLegend(
+                  'Still in Bucket',
+                  Colors.white.withAlpha(50),
+                  pending,
+                ),
+                const Divider(height: 25, color: Colors.white12),
+                Text(
+                  'Total Managed: $total',
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChartLegend(String label, Color color, int count) {
+    return Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        Text(
+          count.toString(),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCinemaArchetype(List? genres) {
+    if (genres == null || genres.isEmpty) return const SizedBox.shrink();
+
+    final topGenre = genres[0]['name'];
+    String archetype = "The Cinematic Explorer";
+    String description =
+        "You have a diverse taste and love exploring all kinds of stories.";
+
+    switch (topGenre) {
+      case 'Action':
+        archetype = "The Action Aficionado";
+        description =
+            "Adrenaline is your middle name. You live for the thrills and big-screen spectacle.";
+        break;
+      case 'Comedy':
+        archetype = "The Laughter Seeker";
+        description =
+            "You believe a day without laughter is a day wasted. Comedy is your escape.";
+        break;
+      case 'Drama':
+        archetype = "The Soul Searcher";
+        description =
+            "You're drawn to deep, meaningful stories and complex characters that touch the heart.";
+        break;
+      case 'Science Fiction':
+        archetype = "The Future Voyager";
+        description =
+            "Your mind is always in the stars. You love exploring the 'what ifs' of tomorrow.";
+        break;
+      case 'Horror':
+        archetype = "The Thrill Chaser";
+        description =
+            "You love the edge-of-your-seat excitement that only a good scare can provide.";
+        break;
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.amber.withAlpha(40), Colors.transparent],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.amber.withAlpha(30)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            archetype.toUpperCase(),
+            style: const TextStyle(
+              color: Colors.amber,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            description,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _getGenreColor(String name) {
+    switch (name) {
+      case 'Action':
+        return Colors.redAccent;
+      case 'Comedy':
+        return Colors.orangeAccent;
+      case 'Drama':
+        return Colors.blueAccent;
+      case 'Science Fiction':
+        return Colors.cyanAccent;
+      case 'Horror':
+        return Colors.deepPurpleAccent;
+      case 'Adventure':
+        return Colors.greenAccent;
+      case 'Animation':
+        return Colors.pinkAccent;
+      case 'Crime':
+        return Colors.grey;
+      case 'Fantasy':
+        return Colors.indigoAccent;
+      case 'Thriller':
+        return Colors.tealAccent;
+      default:
+        return Colors.amber;
+    }
+  }
+
+  Widget _buildFavoriteRadarChart(List? genres) {
+    if (genres == null || genres.length < 3) {
+      return const SizedBox(
+        height: 100,
+        child: Center(
+          child: Text(
+            'Favorite at least 3 items to unlock Radar Chart',
+            style: TextStyle(color: Colors.white24, fontSize: 12),
+          ),
+        ),
+      );
+    }
+
+    // Take top 6 for the radar symmetry
+    final topGenres = genres.take(6).toList();
+
+    return Container(
+      height: 280,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(25),
+      ),
+      child: RadarChart(
+        RadarChartData(
+          dataSets: [
+            RadarDataSet(
+              fillColor: Colors.amber.withAlpha(50),
+              borderColor: Colors.amber,
+              borderWidth: 2,
+              entryRadius: 3,
+              dataEntries: topGenres
+                  .map((e) => RadarEntry(value: (e['count'] as int).toDouble()))
+                  .toList(),
+            ),
+          ],
+          radarBackgroundColor: Colors.transparent,
+          borderData: FlBorderData(show: false),
+          radarBorderData: const BorderSide(color: Colors.white10),
+          titlePositionPercentageOffset: 0.2,
+          titleTextStyle: const TextStyle(
+            color: Colors.white54,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+          ),
+          getTitle: (index, angle) {
+            return RadarChartTitle(
+              text: topGenres[index]['name'],
+              angle: angle,
+            );
+          },
+          tickCount: 3,
+          ticksTextStyle: const TextStyle(color: Colors.transparent),
+          gridBorderData: const BorderSide(color: Colors.white10, width: 1),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGenreDNAChips(List? genres) {
+    if (genres == null || genres.isEmpty) return const SizedBox.shrink();
+
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: genres.map((g) {
+        final color = _getGenreColor(g['name']);
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: color.withAlpha(20),
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: color.withAlpha(40)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 3,
+                height: 15,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withAlpha(100),
+                      blurRadius: 4,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                g['name'],
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '×${g['count']}',
+                style: TextStyle(
+                  color: Colors.white.withAlpha(100),
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildRecentFavorites(List? recentFavs) {
+    if (recentFavs == null || recentFavs.isEmpty) {
+      return const Text(
+        'No favorites yet',
+        style: TextStyle(color: Colors.white24),
+      );
+    }
+
+    return SizedBox(
+      height: 150,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: recentFavs.length,
+        separatorBuilder: (context, index) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          final fav = recentFavs[index];
+          final type = fav['type'] ?? 'movie';
+          return GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) =>
+                    MovieDetailScreen(movieId: fav['id'], contentType: type),
+              ),
+            ),
+            child: Container(
+              width: 100,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                image: DecorationImage(
+                  image: NetworkImage(
+                    'https://image.tmdb.org/t/p/w185${fav['poster_path'] ?? fav['still_path']}',
+                  ),
+                  fit: BoxFit.cover,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildFullGenreReport(List? genres) {
+    if (genres == null || genres.isEmpty) {
+      return const Text(
+        'No genre data available',
+        style: TextStyle(color: Colors.white24),
+      );
+    }
+    return Column(
+      children: genres
+          .map(
+            (g) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        g['name'],
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        '${g['count']} items (${(g['percentage'] * 100).toInt()}%)',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  LinearProgressIndicator(
+                    value: g['percentage'],
+                    backgroundColor: Colors.white.withAlpha(10),
+                    color: Colors.white70,
+                    minHeight: 4,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ],
+              ),
+            ),
+          )
+          .toList(),
     );
   }
 
@@ -1120,60 +1642,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  Widget _buildGenreReport(List? topGenres, String title) {
-    if (topGenres == null || topGenres.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 20),
-        Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 14,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 10),
-        ...topGenres.map(
-          (g) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      g['name'],
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 12,
-                      ),
-                    ),
-                    Text(
-                      '${(g['percentage'] * 100).toInt()}%',
-                      style: const TextStyle(
-                        color: Colors.white38,
-                        fontSize: 10,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                LinearProgressIndicator(
-                  value: g['percentage'],
-                  backgroundColor: Colors.white10,
-                  color: Colors.white,
-                  minHeight: 2,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildSmallStatCard(String value, String label) {
     return Container(
       width: double.infinity,
@@ -1181,14 +1649,17 @@ class _DashboardScreenState extends State<DashboardScreen>
         color: const Color(0xFF1E1E1E),
         borderRadius: BorderRadius.circular(15),
       ),
-      padding: const EdgeInsets.all(15),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
-            style: const TextStyle(color: Colors.white54, fontSize: 14),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white54, fontSize: 11),
           ),
+          const SizedBox(height: 4),
           Text(
             value,
             style: const TextStyle(
@@ -1249,12 +1720,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  String _formatCount(int count) {
-    if (count >= 1000000) return '${(count / 1000000).toStringAsFixed(1)}M';
-    if (count >= 1000) return '${(count / 1000).toStringAsFixed(1)}K';
-    return count.toString();
-  }
-
   Widget _buildStatsRow(Map<String, dynamic> stats) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1300,15 +1765,17 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildTrendingGrid() {
-    if (_isTrendingLoading)
+    if (_isTrendingLoading) {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(20.0),
           child: CircularProgressIndicator(color: Colors.white),
         ),
       );
-    if (_trendingMovies.isEmpty)
+    }
+    if (_trendingMovies.isEmpty) {
       return _buildPlaceholder('No Trending Content');
+    }
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -1326,47 +1793,154 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget _buildMovieGrid({
     List<Movie>? movies,
-    ScrollController? controller,
-    bool shrinkWrap = false,
-    ScrollPhysics? physics,
     required String type,
-    bool? isLoading,
-    bool? hasMore,
+    bool isLoading = false,
+    required int currentPage,
+    required int totalPages,
+    required Function(int) onPageChanged,
   }) {
-    final loading = isLoading ?? _isLoading;
-    final more = hasMore ?? _hasMore;
     if (movies == null || movies.isEmpty) {
-      if (loading)
+      if (isLoading) {
         return const Center(
           child: CircularProgressIndicator(color: Colors.white),
         );
+      }
       return _buildPlaceholder('No Content Found');
     }
-    return GridView.builder(
-      padding: const EdgeInsets.all(20),
-      shrinkWrap: shrinkWrap,
-      physics: physics,
-      controller: controller,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 0.65,
-        crossAxisSpacing: 15,
-        mainAxisSpacing: 15,
+
+    return Column(
+      children: [
+        Expanded(
+          child: isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(color: Colors.white),
+                )
+              : GridView.builder(
+                  padding: const EdgeInsets.all(20),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    childAspectRatio: 0.65,
+                    crossAxisSpacing: 15,
+                    mainAxisSpacing: 15,
+                  ),
+                  itemCount: movies.length,
+                  itemBuilder: (context, index) =>
+                      _buildMovieCard(movies[index], type),
+                ),
+        ),
+        _buildNumberedPagination(
+          currentPage: currentPage,
+          totalPages: totalPages,
+          onPageChanged: onPageChanged,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNumberedPagination({
+    required int currentPage,
+    required int totalPages,
+    required Function(int) onPageChanged,
+  }) {
+    if (totalPages <= 1) return const SizedBox.shrink();
+
+    // Responsive: Show max 5 buttons on mobile
+    List<int> pages = [];
+    if (totalPages <= 5) {
+      pages = List.generate(totalPages, (i) => i + 1);
+    } else {
+      if (currentPage <= 3) {
+        pages = [1, 2, 3, 4, 5];
+      } else if (currentPage >= totalPages - 2) {
+        pages = [
+          totalPages - 4,
+          totalPages - 3,
+          totalPages - 2,
+          totalPages - 1,
+          totalPages,
+        ];
+      } else {
+        pages = [
+          currentPage - 2,
+          currentPage - 1,
+          currentPage,
+          currentPage + 1,
+          currentPage + 2,
+        ];
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 10),
+      decoration: const BoxDecoration(
+        color: Colors.black,
+        border: Border(top: BorderSide(color: Colors.white10)),
       ),
-      itemCount: movies.length + (more ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index == movies.length)
-          return const Center(
-            child: Padding(
-              padding: EdgeInsets.all(8.0),
-              child: CircularProgressIndicator(
-                color: Colors.white,
-                strokeWidth: 2,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Previous
+            _buildPageButton(
+              label: 'Prev',
+              onTap: currentPage > 1
+                  ? () => onPageChanged(currentPage - 1)
+                  : null,
+              isActive: false,
+            ),
+            const SizedBox(width: 5),
+
+            // Numbers
+            ...pages.map(
+              (p) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: _buildPageButton(
+                  label: p.toString(),
+                  onTap: () => onPageChanged(p),
+                  isActive: p == currentPage,
+                ),
               ),
             ),
-          );
-        return _buildMovieCard(movies[index], type);
-      },
+
+            const SizedBox(width: 5),
+            // Next
+            _buildPageButton(
+              label: 'Next',
+              onTap: currentPage < totalPages
+                  ? () => onPageChanged(currentPage + 1)
+                  : null,
+              isActive: false,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPageButton({
+    required String label,
+    VoidCallback? onTap,
+    required bool isActive,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: isActive ? Colors.white : Colors.white.withAlpha(20),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: isActive ? Colors.white : Colors.white24),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isActive ? Colors.black : Colors.white70,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
     );
   }
 

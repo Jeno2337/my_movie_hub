@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "887066695398",
+    "project_id": "mymoviehub-ec6a9",
+    "storage_bucket": "mymoviehub-ec6a9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:887066695398:android:7acaae7762e0b731b44d27",
+        "android_client_info": {
+          "package_name": "com.mymovie.my_movie_hub"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBM_1oRhl5np0thabCvd8AH2G1DdZ0zdbQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

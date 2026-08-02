@@ -235,15 +235,61 @@ class FirebaseService {
 
       Map<String, int> movieGenres = {};
       Map<String, int> tvGenres = {};
+      Map<String, int> favGenres = {};
+      List<Map<String, dynamic>> recentFavs = [];
+
+      // Process Favorites for specific stats
+      for (var doc in favDocs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final genres = data['genres'] as List?;
+        if (genres != null) {
+          for (var g in genres) {
+            final n = g['name'] as String?;
+            if (n != null) favGenres[n] = (favGenres[n] ?? 0) + 1;
+          }
+        }
+      }
+
+      // Get top 5 recent favorites
+      final sortedFavDocs = List.from(favDocs)
+        ..sort((a, b) {
+          final aData = a.data() as Map<String, dynamic>;
+          final bData = b.data() as Map<String, dynamic>;
+          final aTime = aData['added_at'] as Timestamp?;
+          final bTime = bData['added_at'] as Timestamp?;
+          return (bTime?.seconds ?? 0).compareTo(aTime?.seconds ?? 0);
+        });
+      recentFavs = sortedFavDocs
+          .take(5)
+          .map((d) => d.data() as Map<String, dynamic>)
+          .toList();
+
+      // For Time-Series Charts (Weekly/Monthly)
+      Map<int, int> weeklyData = {
+        1: 0,
+        2: 0,
+        3: 0,
+        4: 0,
+        5: 0,
+        6: 0,
+        7: 0,
+      }; // Mon-Sun
+      Map<int, int> monthlyData = {}; // Day of month or week index
+
+      final now = DateTime.now();
+      final last7Days = now.subtract(const Duration(days: 7));
 
       for (var doc in completedDocs) {
         final data = doc.data() as Map<String, dynamic>;
         final type = data['type'] ?? 'movie';
         final runtime = data['runtime'] ?? 0;
         final genres = data['genres'] as List?;
+        final completedAt = (data['completed_at'] as Timestamp?)?.toDate();
 
+        int itemRuntime = 0;
         if (type == 'movie') {
-          movieMins += (runtime as int);
+          itemRuntime = (runtime as int);
+          movieMins += itemRuntime;
           movieCount++;
           if (genres != null) {
             for (var g in genres) {
@@ -252,9 +298,20 @@ class FirebaseService {
             }
           }
         } else {
-          tvMins += (runtime as int);
-          if (type == 'tv') showCount++;
-          if (type == 'episode') episodeCount++;
+          if (type == 'tv') {
+            final avgRuntimeList = data['episode_run_time'] as List?;
+            final avgRuntime =
+                (avgRuntimeList != null && avgRuntimeList.isNotEmpty)
+                ? avgRuntimeList[0] as int
+                : (runtime as int);
+            final numberOfEpisodes = data['number_of_episodes'] ?? 1;
+            itemRuntime = avgRuntime * (numberOfEpisodes as int);
+            showCount++;
+          } else if (type == 'episode') {
+            itemRuntime = (runtime as int);
+            episodeCount++;
+          }
+          tvMins += itemRuntime;
           if (genres != null) {
             for (var g in genres) {
               final n = g['name'] as String?;
@@ -262,37 +319,65 @@ class FirebaseService {
             }
           }
         }
+
+        // Aggregate for Charts
+        if (completedAt != null) {
+          // Weekly (Current Week)
+          if (completedAt.isAfter(last7Days)) {
+            weeklyData[completedAt.weekday] =
+                (weeklyData[completedAt.weekday] ?? 0) + itemRuntime;
+          }
+          // Monthly (Current Month)
+          if (completedAt.month == now.month && completedAt.year == now.year) {
+            int weekOfMonth = ((completedAt.day - 1) / 7).floor() + 1;
+            monthlyData[weekOfMonth] =
+                (monthlyData[weekOfMonth] ?? 0) + itemRuntime;
+          }
+        }
       }
 
       final totalMinutes = movieMins + tvMins;
 
-      // Top Movie Genres
-      final sortedMovieGenres = movieGenres.entries.toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
-      final topMovieGenres = sortedMovieGenres
-          .take(3)
-          .map(
-            (e) => {
-              'name': e.key,
-              'percentage': movieCount == 0 ? 0.0 : e.value / movieCount,
-            },
-          )
-          .toList();
+      // Full Genre Details (Sorted)
+      final allMovieGenres =
+          movieGenres.entries
+              .map(
+                (e) => {
+                  'name': e.key,
+                  'count': e.value,
+                  'percentage': movieCount == 0 ? 0.0 : e.value / movieCount,
+                },
+              )
+              .toList()
+            ..sort((a, b) => (b['count'] as int).compareTo(a['count'] as int));
 
-      // Top TV Genres
-      final sortedTvGenres = tvGenres.entries.toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
-      final topTvGenres = sortedTvGenres
-          .take(3)
-          .map(
-            (e) => {
-              'name': e.key,
-              'percentage': (showCount + episodeCount) == 0
-                  ? 0.0
-                  : e.value / (showCount + episodeCount),
-            },
-          )
-          .toList();
+      final allTvGenres =
+          tvGenres.entries
+              .map(
+                (e) => {
+                  'name': e.key,
+                  'count': e.value,
+                  'percentage': (showCount + episodeCount) == 0
+                      ? 0.0
+                      : e.value / (showCount + episodeCount),
+                },
+              )
+              .toList()
+            ..sort((a, b) => (b['count'] as int).compareTo(a['count'] as int));
+
+      final allFavGenres =
+          favGenres.entries
+              .map(
+                (e) => {
+                  'name': e.key,
+                  'count': e.value,
+                  'percentage': favDocs.isEmpty
+                      ? 0.0
+                      : e.value / favDocs.length,
+                },
+              )
+              .toList()
+            ..sort((a, b) => (b['count'] as int).compareTo(a['count'] as int));
 
       return {
         'favorites': favDocs.length,
@@ -305,8 +390,12 @@ class FirebaseService {
         'movies': movieCount,
         'shows': showCount,
         'episodes': episodeCount,
-        'topMovieGenres': topMovieGenres,
-        'topTvGenres': topTvGenres,
+        'allMovieGenres': allMovieGenres,
+        'allTvGenres': allTvGenres,
+        'allFavGenres': allFavGenres,
+        'recentFavs': recentFavs,
+        'weeklyData': weeklyData, // Map<WeekdayIndex, Minutes>
+        'monthlyData': monthlyData, // Map<WeekOfMonth, Minutes>
         'completionRate': (watchlistDocs.length + completedDocs.length) == 0
             ? 0.0
             : completedDocs.length /
@@ -354,6 +443,13 @@ class FirebaseService {
       await _usersCollection
           .doc(user.uid)
           .collection('watching')
+          .doc(id.toString())
+          .delete();
+
+      // 3. Remove from watchlist (Bucket List)
+      await _usersCollection
+          .doc(user.uid)
+          .collection('watchlist')
           .doc(id.toString())
           .delete();
     });

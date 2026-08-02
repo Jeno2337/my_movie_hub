@@ -37,148 +37,299 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _loadLanguage() async {
     final lang = await _firebaseService.getLanguage();
-    if (mounted) {
-      setState(() {
-        _selectedLanguage = lang;
-      });
-    }
+    if (mounted) setState(() => _selectedLanguage = lang);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        title: const Text('Profile', style: TextStyle(color: Colors.white)),
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
       body: FutureBuilder<Map<String, dynamic>?>(
         future: _firebaseService.getUserData(),
         builder: (context, snapshot) {
           final userData = snapshot.data;
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildUserHeader(userData),
-                const SizedBox(height: 40),
-                const Text(
-                  'Content Language',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+          return CustomScrollView(
+            slivers: [
+              _buildSliverAppBar(userData),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 30, 20, 100),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildSectionHeader('ACCOUNT SETTINGS'),
+                      _buildSettingsCard([
+                        _buildSettingsTile(
+                          Icons.person_outline,
+                          'Name',
+                          userData?['name'] ?? 'User',
+                        ),
+                        _buildSettingsTile(
+                          Icons.phone_iphone_rounded,
+                          'Mobile',
+                          userData?['mobile'] ?? 'N/A',
+                        ),
+                        _buildSettingsTile(
+                          Icons.alternate_email_rounded,
+                          'Email',
+                          userData?['email'] ?? 'N/A',
+                        ),
+                      ]),
+                      const SizedBox(height: 30),
+                      _buildSectionHeader('PREFERENCES'),
+                      _buildSettingsCard([_buildLanguageSelector()]),
+                      const SizedBox(height: 30),
+                      _buildSectionHeader('APP INFORMATION'),
+                      _buildSettingsCard([
+                        _buildSettingsTile(
+                          Icons.info_outline,
+                          'Version',
+                          '1.0.0',
+                        ),
+                      ]),
+                      const SizedBox(height: 40),
+                      _buildLogoutAction(),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 15),
-                _buildLanguageGrid(),
-                const SizedBox(height: 40),
-                _buildLogoutButton(),
-              ],
-            ),
+              ),
+            ],
           );
         },
       ),
     );
   }
 
-  Widget _buildUserHeader(Map<String, dynamic>? userData) {
-    return Row(
-      children: [
-        const CircleAvatar(
-          radius: 40,
-          backgroundColor: Colors.white12,
-          child: Icon(Icons.person, size: 50, color: Colors.white),
-        ),
-        const SizedBox(width: 20),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildSliverAppBar(Map<String, dynamic>? userData) {
+    return SliverAppBar(
+      expandedHeight: 280,
+      backgroundColor: Colors.black,
+      pinned: true,
+      iconTheme: const IconThemeData(color: Colors.white),
+      flexibleSpace: FlexibleSpaceBar(
+        background: Stack(
+          alignment: Alignment.center,
           children: [
-            Text(
-              userData?['name'] ?? 'User',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            Text(
-              userData?['email'] ?? '',
-              style: const TextStyle(color: Colors.white38, fontSize: 14),
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const SizedBox(height: 40),
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.amber.withAlpha(100),
+                      width: 2,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.amber.withAlpha(50),
+                        blurRadius: 20,
+                      ),
+                    ],
+                  ),
+                  child: const CircleAvatar(
+                    radius: 50,
+                    backgroundColor: Color(0xFF1E1E1E),
+                    child: Icon(Icons.person, size: 60, color: Colors.white70),
+                  ),
+                ),
+                const SizedBox(height: 15),
+                Text(
+                  (userData?['name'] ?? 'USER').toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 2,
+                  ),
+                ),
+                Text(
+                  userData?['email'] ?? 'access@hub.com',
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 5, bottom: 12),
+      child: Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white24,
+          fontSize: 11,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 1.5,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettingsCard(List<Widget> children) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF161616),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withAlpha(10)),
+      ),
+      child: Column(children: children),
+    );
+  }
+
+  Widget _buildSettingsTile(
+    IconData icon,
+    String label,
+    String value, {
+    bool isAction = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.amber.withAlpha(200), size: 22),
+          const SizedBox(width: 15),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            value,
+            style: TextStyle(
+              color: isAction ? Colors.amber : Colors.white24,
+              fontSize: 14,
+              fontWeight: isAction ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+          if (isAction)
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: Colors.amber,
+              size: 18,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLanguageSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
+          child: Row(
+            children: [
+              Icon(
+                Icons.translate_rounded,
+                color: Colors.amber.withAlpha(200),
+                size: 22,
+              ),
+              const SizedBox(width: 15),
+              const Text(
+                'Content Language',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 50,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            scrollDirection: Axis.horizontal,
+            itemCount: _languages.length,
+            separatorBuilder: (context, index) => const SizedBox(width: 10),
+            itemBuilder: (context, index) {
+              final lang = _languages[index];
+              final isSelected = _selectedLanguage == lang['code'];
+              return GestureDetector(
+                onTap: () async {
+                  setState(() => _selectedLanguage = lang['code']!);
+                  await _firebaseService.setLanguage(lang['code']!);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  padding: const EdgeInsets.symmetric(horizontal: 15),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? Colors.amber
+                        : Colors.white.withAlpha(10),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Center(
+                    child: Text(
+                      lang['name']!,
+                      style: TextStyle(
+                        color: isSelected ? Colors.black : Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 15),
       ],
     );
   }
 
-  Widget _buildLanguageGrid() {
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 2.5,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-      ),
-      itemCount: _languages.length,
-      itemBuilder: (context, index) {
-        final lang = _languages[index];
-        final isSelected = _selectedLanguage == lang['code'];
-        return GestureDetector(
-          onTap: () async {
-            setState(() {
-              _selectedLanguage = lang['code']!;
-            });
-            await _firebaseService.setLanguage(lang['code']!);
-          },
-          child: Container(
-            decoration: BoxDecoration(
-              color: isSelected ? Colors.white : Colors.white10,
-              borderRadius: BorderRadius.circular(10),
-              border: isSelected ? null : Border.all(color: Colors.white12),
-            ),
-            child: Center(
-              child: Text(
-                lang['name']!,
-                style: TextStyle(
-                  color: isSelected ? Colors.black : Colors.white,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                ),
+  Widget _buildLogoutAction() {
+    return GestureDetector(
+      onTap: () async {
+        await _firebaseService.signOut();
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => const LoginScreen()),
+            (route) => false,
+          );
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 20),
+        decoration: BoxDecoration(
+          color: Colors.redAccent.withAlpha(20),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.redAccent.withAlpha(40)),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.logout_rounded, color: Colors.redAccent, size: 22),
+            SizedBox(width: 10),
+            Text(
+              'LOGOUT ACCOUNT',
+              style: TextStyle(
+                color: Colors.redAccent,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.5,
+                fontSize: 13,
               ),
             ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildLogoutButton() {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: () async {
-          await _firebaseService.signOut();
-          if (mounted) {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => const LoginScreen()),
-              (route) => false,
-            );
-          }
-        },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.redAccent,
-          padding: const EdgeInsets.symmetric(vertical: 15),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-        ),
-        child: const Text(
-          'Logout',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ],
         ),
       ),
     );
